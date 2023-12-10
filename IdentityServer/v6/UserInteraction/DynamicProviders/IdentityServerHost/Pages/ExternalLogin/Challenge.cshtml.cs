@@ -40,7 +40,7 @@ public class Challenge : PageModel
                 { "scheme", scheme },
             }
         };
-
+    
         return Challenge(props, scheme);
     }
 }

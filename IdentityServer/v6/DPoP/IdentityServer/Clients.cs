@@ -4,6 +4,7 @@
 
 using Duende.IdentityServer.Models;
 using System.Collections.Generic;
+using IdentityModel;
 
 namespace IdentityServerHost
 {
@@ -25,8 +26,34 @@ namespace IdentityServerHost
                     PostLogoutRedirectUris = { "https://localhost:5010/signout-callback-oidc" },
 
                     AllowOfflineAccess = true,
-                    AllowedScopes = { "openid", "profile", "scope1" }
-                },           
+                    AllowedScopes = { "openid", "profile", "scope1" },
+                    RequireDPoP = true
+                },
+                new Client
+                {
+                    ClientId = "js_oidc",
+                    AllowedGrantTypes = GrantTypes.Code,
+                    
+                    RedirectUris =
+                    {
+                        "http://localhost:8080/",
+                        "http://localhost:8080/index.html",
+                        "http://localhost:8080/callback.html",
+                        "http://localhost:8080/silent.html",
+                        "http://localhost:8080/modal.html",
+                        "http://localhost:1234/"
+                    },
+                    AllowedCorsOrigins =
+                    {
+                        "http://localhost:1234"
+                    },
+                    AllowOfflineAccess = true,
+                    AllowedScopes = { "openid", "profile", "email" },
+                    RequireClientSecret = false,
+                    RequirePkce = true,
+                    
+                    AlwaysIncludeUserClaimsInIdToken = true
+                }
             };
     }
 }

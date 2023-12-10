@@ -7,8 +7,16 @@ namespace ApiHost
     {
         public void ConfigureServices(IServiceCollection services)
         {
+            services.AddCors(
+                options =>
+                    options.AddDefaultPolicy(
+                        policy =>
+                        {
+                            policy.WithOrigins("http://localhost:1234").AllowAnyHeader().AllowAnyMethod().AllowCredentials();
+                        }));
+            
             services.AddControllers();
-            services.AddCors();
+            
 
             // this API will accept any access token from the authority
             services.AddAuthentication("token")
@@ -17,7 +25,6 @@ namespace ApiHost
                     options.Authority = "https://localhost:5001";
                     options.TokenValidationParameters.ValidateAudience = false;
                     options.MapInboundClaims = false;
-
                     options.TokenValidationParameters.ValidTypes = new[] { "at+jwt" };
                 });
 
@@ -28,6 +35,7 @@ namespace ApiHost
         public void Configure(IApplicationBuilder app)
         {
             app.UseRouting();
+            app.UseCors();
             app.UseAuthentication();
             app.UseAuthorization();
 

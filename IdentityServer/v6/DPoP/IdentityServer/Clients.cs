@@ -51,7 +51,8 @@ namespace IdentityServerHost
                     AllowedScopes = { "openid", "profile", "email" },
                     RequireClientSecret = false,
                     RequirePkce = true,
-                    
+                    RequireDPoP = true,
+                    DPoPValidationMode = DPoPTokenExpirationValidationMode.Nonce,
                     AlwaysIncludeUserClaimsInIdToken = true
                 }
             };

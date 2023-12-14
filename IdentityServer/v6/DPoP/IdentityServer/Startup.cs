@@ -23,8 +23,14 @@ namespace IdentityServerHost
 
         public void ConfigureServices(IServiceCollection services)
         {
+            services.AddCors(
+                options =>
+                    options.AddDefaultPolicy(
+                        policy =>
+                        {
+                            policy.WithOrigins("http://localhost:1234").AllowAnyHeader().AllowAnyMethod().AllowCredentials().WithExposedHeaders("DPoP-nonce");
+                        }));
             services.AddRazorPages();
-
             var builder = services.AddIdentityServer(options =>
             {
                 options.Events.RaiseErrorEvents = true;
@@ -52,6 +58,7 @@ namespace IdentityServerHost
             app.UseStaticFiles();
 
             app.UseRouting();
+            app.UseCors();
             app.UseIdentityServer();
             app.UseAuthorization();
             app.UseEndpoints(endpoints =>

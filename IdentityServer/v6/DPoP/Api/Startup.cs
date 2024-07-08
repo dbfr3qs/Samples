@@ -12,7 +12,12 @@ namespace ApiHost
                     options.AddDefaultPolicy(
                         policy =>
                         {
-                            policy.WithOrigins("http://localhost:1234").AllowAnyHeader().AllowAnyMethod().AllowCredentials();
+                            policy
+                                .WithOrigins("http://localhost:1234")
+                                .AllowAnyHeader()
+                                .AllowAnyMethod()
+                                .AllowCredentials()
+                                .WithExposedHeaders("DPoP-Nonce");
                         }));
             
             services.AddControllers();

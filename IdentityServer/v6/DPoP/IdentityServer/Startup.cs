@@ -40,6 +40,7 @@ namespace IdentityServerHost
 
                 // see https://docs.duendesoftware.com/identityserver/v5/basics/resources
                 options.EmitStaticAudienceClaim = true;
+                //options.DPoP.ProofTokenValidityDuration = System.TimeSpan.FromSeconds(60);
             });
 
             builder.AddTestUsers(TestUsers.Users);

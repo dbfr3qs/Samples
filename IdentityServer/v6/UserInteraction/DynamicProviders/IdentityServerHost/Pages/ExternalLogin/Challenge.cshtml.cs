@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Options;
 
 namespace IdentityServerHost.Pages.ExternalLogin;
 
@@ -40,6 +41,19 @@ public class Challenge : PageModel
                 { "scheme", scheme },
             }
         };
+        
+         var optionsMonitorType = typeof(IOptionsMonitorCache<>).MakeGenericType(typeof(Microsoft.AspNetCore.Authentication.OpenIdConnect.OpenIdConnectOptions));
+         // need to resolve the provide type dynamically, thus the need for the http context accessor
+        
+         var optionsCache = HttpContext.RequestServices.GetService(optionsMonitorType);
+         if (optionsCache != null)
+         {
+             var mi = optionsMonitorType.GetMethod("TryRemove");
+             if (mi != null)
+             {
+                 mi.Invoke(optionsCache, new[] { "demoidsrv" });
+             }
+         }
     
         return Challenge(props, scheme);
     }

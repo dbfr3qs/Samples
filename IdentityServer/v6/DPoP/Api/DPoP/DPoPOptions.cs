@@ -11,5 +11,5 @@ public class DPoPOptions
     public TimeSpan ServerClockSkew { get; set; } = TimeSpan.FromMinutes(5);
 
     public bool ValidateIat { get; set; } = true;
-    public bool ValidateNonce { get; set; } = false;
+    public bool ValidateNonce { get; set; } = true;
 }

@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimpleApi", "..\Apis\Simple
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Client", "src\Client.csproj", "{62493CA0-0872-4C10-AE75-1D2590B027EF}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "IFramedApp", "IFramedApp\IFramedApp.csproj", "{0884CE76-5DE9-445B-B5FA-2EA52F6DDCE2}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -70,6 +72,18 @@ Global
 		{62493CA0-0872-4C10-AE75-1D2590B027EF}.Release|x64.Build.0 = Release|Any CPU
 		{62493CA0-0872-4C10-AE75-1D2590B027EF}.Release|x86.ActiveCfg = Release|Any CPU
 		{62493CA0-0872-4C10-AE75-1D2590B027EF}.Release|x86.Build.0 = Release|Any CPU
+		{0884CE76-5DE9-445B-B5FA-2EA52F6DDCE2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0884CE76-5DE9-445B-B5FA-2EA52F6DDCE2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0884CE76-5DE9-445B-B5FA-2EA52F6DDCE2}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{0884CE76-5DE9-445B-B5FA-2EA52F6DDCE2}.Debug|x64.Build.0 = Debug|Any CPU
+		{0884CE76-5DE9-445B-B5FA-2EA52F6DDCE2}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{0884CE76-5DE9-445B-B5FA-2EA52F6DDCE2}.Debug|x86.Build.0 = Debug|Any CPU
+		{0884CE76-5DE9-445B-B5FA-2EA52F6DDCE2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0884CE76-5DE9-445B-B5FA-2EA52F6DDCE2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0884CE76-5DE9-445B-B5FA-2EA52F6DDCE2}.Release|x64.ActiveCfg = Release|Any CPU
+		{0884CE76-5DE9-445B-B5FA-2EA52F6DDCE2}.Release|x64.Build.0 = Release|Any CPU
+		{0884CE76-5DE9-445B-B5FA-2EA52F6DDCE2}.Release|x86.ActiveCfg = Release|Any CPU
+		{0884CE76-5DE9-445B-B5FA-2EA52F6DDCE2}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 	EndGlobalSection

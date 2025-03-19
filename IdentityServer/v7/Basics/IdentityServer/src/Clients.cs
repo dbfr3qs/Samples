@@ -81,6 +81,22 @@ namespace IdentityServerHost
                     AllowedScopes = { "openid", "profile", "scope1", "scope2" }
                 },
                 
+                // iframed mvc
+                new Client
+                {
+                    ClientId = "iframed.mvc.sample",
+                    ClientSecrets = { new Secret("secret".Sha256()) },
+                    
+                    AllowedGrantTypes = GrantTypes.Code,
+
+                    RedirectUris = { "https://localhost:5124/signin-oidc", "https://derp.web:5124/signin-oidc" },
+                    FrontChannelLogoutUri = "https://localhost:5124/signout-oidc",
+                    PostLogoutRedirectUris = { "https://localhost:5124/signout-callback-oidc" },
+
+                    AllowOfflineAccess = true,
+                    AllowedScopes = { "openid", "profile", "scope1", "scope2" }
+                },
+                
                 // MVC basic sample with token management
                 // this client has a short access token lifetime to experiment with automatic refresh
                 new Client

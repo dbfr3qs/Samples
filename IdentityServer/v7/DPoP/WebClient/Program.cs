@@ -63,9 +63,10 @@ builder.Services.AddAuthentication(options =>
         options.ResponseMode = "query";
         options.UsePkce = true;
 
-        // Disable PAR for attack demo so dpop_jkt is visible in URL
+        // Enable PAR to demonstrate that it doesn't prevent the attack
+        // when request_uri is exposed in the front-channel
         options.PushedAuthorizationBehavior =
-            Microsoft.AspNetCore.Authentication.OpenIdConnect.PushedAuthorizationBehavior.Disable;
+            Microsoft.AspNetCore.Authentication.OpenIdConnect.PushedAuthorizationBehavior.Require;
 
         options.Scope.Clear();
         options.Scope.Add("openid");
@@ -78,6 +79,26 @@ builder.Services.AddAuthentication(options =>
         options.SaveTokens = true;
         options.MapInboundClaims = false;
         options.DisableTelemetry = true;
+
+        options.Events.OnRedirectToIdentityProvider = context =>
+        {
+            var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
+            
+            var authUrl = context.ProtocolMessage.CreateAuthenticationRequestUrl();
+            logger.LogInformation("=== AUTHORIZATION REQUEST ===");
+            logger.LogInformation("Full URL: {Url}", authUrl);
+            logger.LogInformation("Response Mode: {ResponseMode}", context.ProtocolMessage.ResponseMode);
+            logger.LogInformation("Response Type: {ResponseType}", context.ProtocolMessage.ResponseType);
+            
+            // Log request_uri if using PAR
+            if (!string.IsNullOrEmpty(context.ProtocolMessage.RequestUri))
+            {
+                logger.LogWarning("⚠️ PAR request_uri exposed in front-channel: {RequestUri}", context.ProtocolMessage.RequestUri);
+                logger.LogWarning("⚠️ This request_uri can be stolen and reused by an attacker!");
+            }
+            
+            return Task.CompletedTask;
+        };
 
         options.TokenValidationParameters = new TokenValidationParameters
         {

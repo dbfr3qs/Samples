@@ -28,8 +28,9 @@ public static class Clients
 
                 RequireDPoP = true,
                 
-                // Disable PAR for attack demo so dpop_jkt is visible in URL
-                RequirePushedAuthorization = false,
+                // Enable PAR to demonstrate that it doesn't prevent the attack
+                // when request_uri is exposed and reusable in the front-channel
+                RequirePushedAuthorization = true,
             },
             
             // Public client for attack demo (no client secret required)

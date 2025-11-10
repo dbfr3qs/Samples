@@ -1,53 +1,127 @@
-# OAuth DPoP Browser Swapping Attack Demo
+# OAuth DPoP Browser Swapping Attack Demo with PAR
 
 ## Overview
 
-This demo demonstrates a browser swapping attack that bypasses DPoP (Demonstrating Proof of Possession) protection in OAuth flows. The attack exploits a scenario where malicious JavaScript can intercept and manipulate the OAuth authorization flow.
+This demo demonstrates a browser swapping attack that **bypasses both DPoP (Demonstrating Proof of Possession) AND PAR (Pushed Authorization Requests)** protection in OAuth flows. The attack proves that PAR alone does not prevent this type of attack when:
+
+1. The `request_uri` is exposed in the front-channel (browser URL)
+2. The `request_uri` can be reused by a different browser
+3. Malicious JavaScript can intercept the authorization code
+
+**Key Finding**: Even with PAR enabled, the attack succeeds because the `request_uri` is visible and reusable, and it contains all of the attacker's cryptographic parameters (dpop_jkt, code_challenge, nonce).
 
 ## Attack Flow
 
 ### High-Level Overview
 
-This attack demonstrates how an attacker can bypass DPoP protection by coordinating between their browser and a victim's compromised browser. The key insight is that while DPoP binds tokens to a specific key, if the attacker can control the authorization request parameters AND obtain the resulting authorization code, they can complete the flow.
+This attack demonstrates how an attacker can bypass both DPoP and PAR protection by:
+1. Initiating a legitimate OAuth flow that triggers a PAR request
+2. Stealing the `request_uri` from their browser's URL
+3. Having the victim's compromised browser reuse that `request_uri`
+4. Intercepting the authorization code when it returns
+5. Completing the token exchange with their own DPoP key and code_verifier
 
 ### Detailed Attack Steps
 
-1. **Attacker Phase 1 - Capture OAuth Parameters**: 
-   - The attacker initiates a legitimate OAuth flow in their browser
-   - When redirected to the authorization endpoint, the URL contains:
-     - `dpop_jkt`: The DPoP key thumbprint (binds the flow to attacker's key)
-     - `state`: OAuth state parameter
-     - `code_challenge`: PKCE challenge (attacker has the matching verifier)
-     - `nonce`: OpenID Connect nonce for replay protection
-   - The attacker manually copies these parameters from the URL
+#### Phase 1: Attacker Captures request_uri
 
-2. **Attacker Phase 2 - Send Parameters to Victim**:
-   - The attacker submits all captured parameters to the AttackerApi
-   - These parameters are stored and made available to the victim's browser
+1. **Attacker initiates OAuth flow**:
+   - Navigates to `/Home/Secure` in their browser
+   - WebClient backend makes a PAR request to the Authorization Server:
+     ```
+     POST /connect/par
+     client_id=dpop
+     &dpop_jkt=<ATTACKER_KEY_THUMBPRINT>     ← Attacker's DPoP key!
+     &code_challenge=<ATTACKER_CHALLENGE>    ← Attacker has verifier!
+     &nonce=<ATTACKER_NONCE>                 ← Attacker's nonce!
+     ```
 
-3. **Victim Phase 1 - Receive Stolen Parameters**:
-   - The victim's browser (compromised with malicious JavaScript) polls the AttackerApi
-   - Once available, it receives all the attacker's OAuth parameters
+2. **Authorization Server returns request_uri**:
+   ```json
+   {
+     "request_uri": "urn:ietf:params:oauth:request_uri:6esc_11ACC5bwc014ltc14eY22c",
+     "expires_in": 60
+   }
+   ```
 
-4. **Victim Phase 2 - Silent Authorization Request**:
-   - The victim's browser constructs a new authorization request using:
-     - The attacker's `dpop_jkt` (binds to attacker's DPoP key)
-     - The attacker's `code_challenge` (attacker has the verifier)
-     - The attacker's `nonce` (for proper ID token validation)
-   - Since the victim is already authenticated with the Authorization Server, the request succeeds silently
-   - The authorization code is issued bound to the attacker's DPoP key
+3. **Attacker's browser redirected to**:
+   ```
+   https://localhost:5001/connect/authorize
+     ?client_id=dpop
+     &request_uri=urn:ietf:params:oauth:request_uri:6esc_11ACC5bwc014ltc14eY22c
+   ```
+   
+   ⚠️ **The `request_uri` is visible in the browser's address bar!**
 
-5. **Victim Phase 3 - Intercept Authorization Code**:
-   - When the authorization code is returned, malicious JavaScript intercepts it
-   - The code is sent to the AttackerApi before the victim's browser can use it
+4. **Attacker copies the `request_uri`** from the URL
 
-6. **Attacker Phase 3 - Complete Token Exchange**:
-   - The attacker retrieves the stolen authorization code from AttackerApi
-   - The attacker exchanges the code for tokens using:
-     - Their DPoP key (matches the `dpop_jkt` from step 1)
-     - Their `code_verifier` (matches the `code_challenge` from step 1)
-   - The token exchange succeeds because all cryptographic bindings match
-   - The attacker is now authenticated as the victim!
+#### Phase 2: Attacker Sends request_uri to Victim
+
+5. **Attacker submits `request_uri` to AttackerApi**:
+   - Pastes the `request_uri` into the attack interface
+   - Clicks "Submit request_uri"
+   - The `request_uri` is stored and made available to the victim's browser
+
+#### Phase 3: Victim's Browser Uses Stolen request_uri
+
+6. **Victim's browser (with malicious JavaScript)**:
+   - Polls the AttackerApi for a stolen `request_uri`
+   - Receives the attacker's `request_uri`
+   - **Important**: This `request_uri` contains the attacker's dpop_jkt, code_challenge, and nonce!
+
+7. **Malicious JavaScript creates hidden iframe**:
+   ```javascript
+   const iframe = document.createElement('iframe');
+   iframe.src = 'https://localhost:5001/connect/authorize'
+     + '?client_id=dpop'
+     + '&request_uri=' + stolenRequestUri;  // Attacker's request_uri!
+   ```
+
+8. **Authorization Server processes the request**:
+   - Looks up the `request_uri`
+   - Retrieves the stored parameters (attacker's dpop_jkt, code_challenge, nonce)
+   - Victim is already authenticated
+   - Issues authorization code **bound to attacker's DPoP key**
+
+9. **Callback with authorization code**:
+   ```
+   https://localhost:5010/signin-oidc
+     ?code=ABC123...
+     &state=XYZ789...
+   ```
+   
+   - The callback fails (state mismatch - state is from victim's session, not attacker's)
+   - But the malicious JavaScript intercepts the URL before the error!
+
+10. **Malicious JavaScript extracts code and state**:
+    ```javascript
+    const url = new URL(iframe.contentWindow.location.href);
+    const code = url.searchParams.get('code');
+    const state = url.searchParams.get('state');
+    ```
+
+11. **Code and state exfiltrated to AttackerApi**
+
+#### Phase 4: Attacker Completes Token Exchange
+
+12. **Attacker retrieves stolen code and state** from AttackerApi
+
+13. **Attacker navigates to**:
+    ```
+    https://localhost:5010/signin-oidc
+      ?code=<STOLEN_CODE>
+      &state=<STOLEN_STATE>
+    ```
+
+14. **WebClient backend validates and exchanges**:
+    - Validates state (matches attacker's correlation cookie) ✅
+    - Exchanges code for tokens using:
+      - Stolen authorization code
+      - Attacker's `code_verifier` (from correlation cookie)
+      - Attacker's DPoP key (matches the `dpop_jkt` in PAR)
+    - Validates ID token nonce (matches attacker's nonce) ✅
+
+15. **✅ Attack succeeds! Attacker is authenticated as the victim**
 
 ## Architecture
 
@@ -60,10 +134,11 @@ This attack demonstrates how an attacker can bypass DPoP protection by coordinat
 
 ### Key Files
 
-- `AttackerApi/wwwroot/attack.js`: Malicious JavaScript that intercepts OAuth flows
-- `AttackerApi/Program.cs`: API endpoints for storing/retrieving stolen credentials
-- `WebClient/Views/Home/AttackDemo.cshtml`: Attacker's UI
-- `WebClient/Views/Home/AttackVictim.cshtml`: Victim's UI (simulates compromised browser)
+- `WebClient/Views/Home/Secure.cshtml`: Contains malicious JavaScript that intercepts OAuth flows
+- `WebClient/Views/Home/AttackDemo.cshtml`: Attacker's control interface
+- `AttackerApi/Program.cs`: API endpoints for storing/retrieving stolen `request_uri` and authorization codes
+- `WebClient/Program.cs`: OAuth client configuration with PAR enabled
+- `IdentityServerHost/Clients.cs`: Authorization Server client configuration with PAR required
 
 ## Running the Demo
 
@@ -102,15 +177,17 @@ dotnet run
 4. Click **"Start OAuth Flow"**
 5. You'll be redirected to the IdentityServer authorize endpoint
 6. **STOP!** Don't complete the login yet. Look at the URL in your browser's address bar
-7. Copy the following parameters from the URL:
-   - `dpop_jkt=...` (e.g., `NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs`)
-   - `state=...` (long base64 string)
-   - `code_challenge=...` (base64url string)
-   - `nonce=...` (numeric timestamp)
-8. Return to the AttackDemo page (use browser back button)
-9. Paste each parameter into the corresponding input field
-10. Click **"Submit Parameters"** - all fields should turn green
-11. The parameters are now available to the victim's browser via the AttackerApi
+7. The URL should look like:
+   ```
+   https://localhost:5001/connect/authorize
+     ?client_id=dpop
+     &request_uri=urn:ietf:params:oauth:request_uri:6esc_11ACC5bwc014ltc14eY22c
+   ```
+8. **Copy the `request_uri` parameter** (the part after `request_uri=`)
+9. Return to the AttackDemo page (use browser back button)
+10. Paste the `request_uri` into the input field
+11. Click **"Submit request_uri"** - the field should turn green
+12. The `request_uri` is now available to the victim's browser via the AttackerApi
 
 ### Step 3: Set Up Victim Browser
 
@@ -120,30 +197,29 @@ dotnet run
 2. **First, establish a victim session with IdentityServer:**
    - Navigate to: `https://localhost:5010/Home/Secure`
    - Log in with the victim's credentials (e.g., **alice/alice**)
-   - You should see the "Secure" page confirming you're logged in
+   - You should see the "Secure" page with claims displayed
    - This creates an active session with the Authorization Server
-   - **Important**: Keep this browser window open and logged in
+   - **Important**: Keep this browser window open and stay on the `/Home/Secure` page
 
-3. **Now simulate the compromised browser:**
-   - In the same browser, navigate to: `https://localhost:5010/Home/AttackVictim`
-   - Click **"Start Victim Simulation"**
-   - The status should show "Polling for DPoP proof..."
+3. **Observe the automatic attack:**
+   - The malicious JavaScript on `/Home/Secure` automatically:
+     - Polls the AttackerApi for a stolen `request_uri`
+     - Finds the `request_uri` you submitted in Step 2
+     - Creates a hidden iframe with the stolen `request_uri`
+     - The iframe navigates to the authorize endpoint
+     - Since you're already logged in, authorization happens silently
+     - The callback returns with code and state in the URL
+     - JavaScript intercepts the code and state from the iframe's URL
+     - Sends them to the AttackerApi
 
-4. **Wait for stolen parameters:**
-   - The victim's browser automatically polls the AttackerApi
-   - Once the attacker's parameters are detected (from Step 2), you'll see:
-     - "✅ Stolen DPoP JKT received!"
-     - The attacker's session ID
-     - A truncated view of the stolen parameters
-
-5. **Trigger the silent OAuth flow:**
-   - Click **"Manually Authenticate"**
-   - You'll be redirected to `/Home/Secure` (or may see a brief authorization screen)
-   - Since you're already logged in, the authorization happens automatically
-   - The malicious JavaScript intercepts the authorization code
-   - You'll see: "🚨 INTERCEPTED Authorization Code!"
-   - The code is automatically sent to the AttackerApi
-   - Status changes to "Code Exfiltrated!"
+4. **Check the browser console** (F12 → Console tab) to see:
+   ```
+   [MALICIOUS JS] Found request_uri from attacker!
+   [MALICIOUS JS] Starting silent OAuth flow with stolen request_uri (PAR)...
+   [MALICIOUS JS] 🚨 INTERCEPTED OAuth callback URL!
+   [MALICIOUS JS] ✅ Extracted code: CBB5BC38506A1D73...
+   [MALICIOUS JS] ✅ Successfully sent authorization code to attacker!
+   ```
 
 ### Step 4: Complete the Attack
 
@@ -157,15 +233,15 @@ dotnet run
 3. **Complete the attack:**
    - Click **"Complete Login with Stolen Code"**
    - The attacker's browser will:
-     - Retrieve the stolen authorization code from AttackerApi
-     - Inject it into the OAuth callback URL with the attacker's state
+     - Retrieve the stolen authorization code and state from AttackerApi
+     - Navigate to: `/signin-oidc?code=<STOLEN>&state=<STOLEN>`
      - The OIDC middleware will:
-       - Validate the state (matches attacker's correlation cookie)
+       - Validate the state (matches attacker's correlation cookie) ✅
        - Exchange the code for tokens using:
          - The stolen authorization code
          - The attacker's `code_verifier` (from correlation cookie)
-         - The attacker's DPoP key (matches the `dpop_jkt`)
-       - Validate the ID token nonce (matches attacker's nonce)
+         - The attacker's DPoP key (matches the `dpop_jkt` from PAR)
+       - Validate the ID token nonce (matches attacker's nonce from PAR) ✅
 
 4. **Attack successful!**
    - You'll be redirected to `/Home/Secure`
@@ -175,21 +251,34 @@ dotnet run
 
 ## Important Notes
 
-### Session ID Coordination
-
-The attack requires both the attacker and victim to use the **same Session ID**. In the current implementation:
-
-- Each browser generates its own random Session ID
-- You need to manually copy the Session ID from the attacker browser to the victim browser
-- In a real attack, this would be coordinated through the malicious JavaScript
-
-### Browser Sessions
+### Victim Must Be Logged In
 
 The victim must have an active session with the Authorization Server (IdentityServerHost) for the attack to work. This is because:
 
 - The victim's browser needs to be already authenticated
-- When the victim initiates the OAuth flow, the AS recognizes the existing session
+- When the hidden iframe makes the authorization request, the AS recognizes the existing session
 - The authorization code is issued without requiring re-authentication
+- This is a realistic scenario - users often stay logged in to services
+
+### The State Parameter
+
+You might notice that the state parameter doesn't match between the attacker's session and the victim's authorization:
+
+- The attacker's correlation cookie has their own state
+- The victim's authorization generates a different state
+- But the attacker uses the **stolen state** from the victim's callback
+- This works because the attacker navigates to `/signin-oidc?code=STOLEN&state=STOLEN`
+- The backend sees the stolen state and code together, validates them, and completes the exchange
+
+### PAR Doesn't Help
+
+Even though PAR is enabled:
+
+- The `request_uri` is visible in the browser URL (front-channel)
+- The `request_uri` can be reused by the victim's browser
+- The `request_uri` contains all the attacker's cryptographic parameters
+- Malicious JavaScript can still intercept the authorization code
+- **PAR alone does not prevent this attack**
 
 ### CORS Configuration
 
@@ -197,36 +286,44 @@ The AttackerApi has CORS enabled to allow cross-origin requests from the WebClie
 
 ## Security Implications
 
-### Why DPoP Doesn't Prevent This Attack
+### Why DPoP AND PAR Don't Prevent This Attack
 
-This attack demonstrates that **DPoP alone is not sufficient** to prevent all OAuth attacks. The attack succeeds because:
+This attack demonstrates that **DPoP and PAR together are not sufficient** to prevent all OAuth attacks. The attack succeeds because:
 
 1. **DPoP Binds to the Wrong Browser**: 
    - DPoP successfully binds the tokens to a specific key
-   - However, the attacker controls which key is used from the start
+   - However, the attacker controls which key is used from the start (via PAR)
    - The authorization code is issued bound to the attacker's DPoP key, not the victim's
 
-2. **JavaScript Access**: 
-   - Malicious JavaScript can read and manipulate authorization requests
-   - It can intercept authorization codes before the legitimate flow completes
+2. **PAR's request_uri is Exposed**:
+   - PAR moves parameters to the back-channel (secure)
+   - But the `request_uri` is still in the front-channel (browser URL)
+   - The `request_uri` is visible and can be copied
+   - The `request_uri` can be reused by any browser
+   - No binding between `request_uri` and the browser that will use it
+
+3. **JavaScript Access**: 
+   - Malicious JavaScript can read the `request_uri` from the attacker's URL
+   - It can create hidden iframes with the stolen `request_uri`
+   - It can intercept authorization codes from iframe URLs
    - It can exfiltrate data to external servers
 
-3. **Session Reuse**: 
+4. **Session Reuse**: 
    - The victim's existing Authorization Server session is leveraged
    - No re-authentication is required if the victim is already logged in
    - The AS doesn't know the request came from malicious JavaScript
 
-4. **PKCE Doesn't Help**:
-   - The attacker generates their own `code_verifier` and `code_challenge`
-   - The victim's browser uses the attacker's `code_challenge` in the authorization request
+5. **PKCE Doesn't Help**:
+   - The attacker generates their own `code_verifier` and `code_challenge` (in PAR)
+   - The victim's browser uses the attacker's `request_uri` (which contains the challenge)
    - The attacker has the matching `code_verifier` for token exchange
    - PKCE validation passes because the attacker controls both sides
 
-5. **All Cryptographic Bindings Match**:
-   - `dpop_jkt` → Attacker's DPoP key
-   - `code_challenge` → Attacker's PKCE verifier
-   - `nonce` → Attacker's nonce (for ID token validation)
-   - `state` → Attacker's state (for CSRF protection)
+6. **All Cryptographic Bindings Match**:
+   - `dpop_jkt` → Attacker's DPoP key (in PAR request)
+   - `code_challenge` → Attacker's PKCE verifier (in PAR request)
+   - `nonce` → Attacker's nonce (in PAR request)
+   - `state` → Stolen from victim's callback, used by attacker
    - From the Authorization Server's perspective, this looks like a legitimate flow
 
 ## Mitigations
@@ -242,11 +339,14 @@ To prevent this type of attack, implement defense-in-depth:
 - **Regular Security Audits**: Review all third-party scripts and dependencies
 - **Input Sanitization**: Prevent XSS vulnerabilities
 
-### 2. **Pushed Authorization Requests (PAR)**
-- Require clients to push authorization parameters to the AS via a back-channel
-- The AS returns a request URI that's used in the front-channel
-- Malicious JavaScript cannot modify the authorization parameters
-- **This is the most effective mitigation for this specific attack**
+### 2. **Enhanced PAR Implementation**
+- **PAR alone is NOT sufficient** (as this demo proves)
+- Additional protections needed:
+  - Browser-bound `request_uri` (not in current OAuth specs)
+  - Single-use `request_uri` (prevent reuse)
+  - Very short expiration (10-30 seconds)
+  - Prevent `response_mode` override in authorize request
+- These enhancements would prevent `request_uri` reuse across browsers
 
 ### 3. **User Interaction Requirements**
 - Require explicit user consent for each authorization (disable silent auth)
@@ -280,17 +380,18 @@ If you see CORS errors in the browser console:
 - Check that CORS is enabled in `AttackerApi/Program.cs`
 - Verify you've accepted the SSL certificate for `https://localhost:7666`
 
-### Parameters Not Showing in URL
+### request_uri Not Showing in URL
 
-If you don't see the OAuth parameters in the authorize URL:
+If you don't see the `request_uri` in the authorize URL:
 - Make sure you clicked "Start OAuth Flow" in the AttackDemo page
 - Check that you're looking at the IdentityServer URL (port 5001)
-- The URL should contain: `dpop_jkt`, `state`, `code_challenge`, `nonce`
+- The URL should contain: `client_id=dpop&request_uri=urn:ietf:params:oauth:request_uri:...`
+- Verify PAR is enabled in `WebClient/Program.cs` and `IdentityServerHost/Clients.cs`
 
-### Victim Browser Not Receiving Parameters
+### Victim Browser Not Receiving request_uri
 
-If the victim's browser shows "ERROR: dpop_jkt not found":
-- Verify you submitted the parameters in the attacker browser (Step 2.10)
+If the victim's browser console shows "ERROR: request_uri not found":
+- Verify you submitted the `request_uri` in the attacker browser (Step 2.11)
 - Check the AttackerApi logs for successful storage
 - Try clicking "Check Status" in the attacker browser to verify data is stored
 
@@ -298,15 +399,18 @@ If the victim's browser shows "ERROR: dpop_jkt not found":
 
 If the victim's browser doesn't intercept the code:
 - Ensure the victim is logged in to IdentityServer first (Step 3.2)
-- Check browser console for JavaScript errors
-- Verify the malicious script is loaded from `https://localhost:7666/attack.js`
+- Make sure you're on the `/Home/Secure` page (not `/Home/AttackVictim`)
+- Check browser console (F12) for JavaScript logs showing the attack progress
+- Look for messages like "Found request_uri from attacker!" and "INTERCEPTED OAuth callback URL!"
+- If you see cross-origin errors, the iframe is working but can't read the URL (this is expected after redirect)
 
-### Nonce Validation Error
+### State or Nonce Validation Error
 
-If you see "OpenIdConnectProtocolInvalidNonceException":
-- Ensure you captured and submitted the `nonce` parameter from the authorize URL
-- Verify the nonce is being sent to the AttackerApi (check the JSON payload)
-- Confirm the victim's browser is using the stolen nonce in the silent auth request
+If you see validation errors:
+- The nonce is embedded in the PAR `request_uri` - no need to capture it separately
+- The state is generated fresh for each authorization request
+- The attacker uses the **stolen state** from the victim's callback
+- Make sure the attacker clicks "Complete Login with Stolen Code" (not manually navigating)
 
 ### Certificate Errors
 
@@ -317,6 +421,19 @@ You may need to accept self-signed certificates for all services:
 - AttackerApi: `https://localhost:7666`
 
 Visit each URL directly and accept the certificate warning.
+
+## Key Takeaways
+
+1. **DPoP alone does not prevent browser swapping attacks** - The attacker controls the DPoP key from the start
+2. **PAR alone does not prevent browser swapping attacks** - The `request_uri` is visible and reusable
+3. **DPoP + PAR together are still insufficient** - When JavaScript is compromised, both can be bypassed
+4. **The root cause is JavaScript compromise** - Preventing malicious JavaScript is the primary defense
+5. **Defense in depth is essential** - Multiple layers of security are needed (CSP, SRI, monitoring, etc.)
+
+## Related Documentation
+
+- **[PAR_ATTACK_ANALYSIS.md](PAR_ATTACK_ANALYSIS.md)**: Detailed technical analysis of why PAR doesn't prevent this attack
+- **[PAR_ATTACK_QUICK_START.md](PAR_ATTACK_QUICK_START.md)**: Quick start guide for testing the demo
 
 ## Educational Purpose Only
 

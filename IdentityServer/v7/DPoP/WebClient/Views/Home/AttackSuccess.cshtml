@@ -1,0 +1,55 @@
+@{
+    ViewData["Title"] = "Attack Success";
+}
+
+<div class="container mt-5">
+    <div class="card">
+        <div class="card-header @(ViewBag.Success ? "bg-success" : "bg-danger") text-white">
+            <h2>@(ViewBag.Success ? "✅ Attack Successful!" : "❌ Attack Failed")</h2>
+        </div>
+        <div class="card-body">
+            @if (ViewBag.Success)
+            {
+                <div class="alert alert-success">
+                    <h4>Token Exchange Successful!</h4>
+                    <p>The attacker successfully exchanged the stolen authorization code for access tokens using:</p>
+                    <ul>
+                        <li>Stolen authorization code (from victim's browser)</li>
+                        <li>Stolen PKCE code_verifier (from victim's browser)</li>
+                        <li>Attacker's DPoP key (matching the dpop_jkt sent in authorize request)</li>
+                    </ul>
+                </div>
+                
+                <h5>Token Response:</h5>
+                <pre class="bg-light p-3 border rounded"><code>@ViewBag.TokenResponse</code></pre>
+                
+                <div class="alert alert-info mt-3">
+                    <strong>What happened:</strong>
+                    <ol>
+                        <li>Attacker initiated OAuth flow and captured their <code>dpop_jkt</code> and <code>state</code></li>
+                        <li>Victim's browser (with malicious JS) polled for the <code>dpop_jkt</code></li>
+                        <li>Victim's browser created a silent OAuth request with the stolen <code>dpop_jkt</code></li>
+                        <li>Since victim was logged in, authorization server issued a code bound to attacker's <code>dpop_jkt</code></li>
+                        <li>Victim's browser intercepted the code and <code>code_verifier</code> and sent them to attacker</li>
+                        <li>Attacker exchanged the code using their DPoP key → Success!</li>
+                    </ol>
+                </div>
+            }
+            else
+            {
+                <div class="alert alert-danger">
+                    <h4>Token Exchange Failed</h4>
+                    <p>The attack did not succeed. Error details:</p>
+                </div>
+                
+                <h5>Error Response:</h5>
+                <pre class="bg-light p-3 border rounded"><code>@ViewBag.Error</code></pre>
+            }
+            
+            <div class="mt-3">
+                <a href="/Home/AttackDemo" class="btn btn-primary">Back to Attack Demo</a>
+                <a href="/Home/Secure" class="btn btn-secondary">View Secure Page</a>
+            </div>
+        </div>
+    </div>
+</div>

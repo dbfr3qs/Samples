@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OAuth DPoP Attack Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 { color: #d32f2f; }
+        h2 { color: #333; border-bottom: 2px solid #d32f2f; padding-bottom: 10px; }
+        .mode-selector {
+            display: flex;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .mode-button {
+            flex: 1;
+            padding: 20px;
+            border: 3px solid #ddd;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-align: center;
+        }
+        .mode-button:hover {
+            border-color: #d32f2f;
+            background: #fff5f5;
+        }
+        .mode-button.attacker { border-color: #ff9800; }
+        .mode-button.victim { border-color: #2196f3; }
+        .btn {
+            background: #d32f2f;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        .btn:hover { background: #b71c1c; }
+        .btn.secondary {
+            background: #757575;
+        }
+        .btn.secondary:hover { background: #616161; }
+        .status {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-family: monospace;
+        }
+        .log {
+            background: #000;
+            color: #0f0;
+            padding: 15px;
+            border-radius: 4px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .warning {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+        code {
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+        .step {
+            background: #e8f5e9;
+            padding: 10px;
+            margin: 10px 0;
+            border-left: 4px solid #4caf50;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⚠️ OAuth DPoP Attack Demonstration</h1>
+        <div class="warning">
+            <strong>Warning:</strong> This is a security research tool to demonstrate potential vulnerabilities in OAuth DPoP implementations.
+            Use only for educational purposes and authorized testing.
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>How the Attack Works</h2>
+        <div class="step">
+            <strong>Step 1 (Attacker):</strong> Attacker starts OAuth flow, intercepts their own DPoP proof before it reaches the authorize endpoint, and exfiltrates it to the attacker API.
+        </div>
+        <div class="step">
+            <strong>Step 2 (Victim):</strong> Victim's browser (compromised with malicious JS) polls the attacker API and receives the stolen DPoP proof.
+        </div>
+        <div class="step">
+            <strong>Step 3 (Victim):</strong> Victim's browser initiates a silent OAuth flow in an invisible iframe, injecting the stolen DPoP proof.
+        </div>
+        <div class="step">
+            <strong>Step 4 (Victim):</strong> After receiving the authorization code from the server, the victim's browser intercepts it and sends it to the attacker API.
+        </div>
+        <div class="step">
+            <strong>Step 5 (Attacker):</strong> Attacker retrieves the stolen authorization code and uses it to complete their OAuth flow, gaining unauthorized access.
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>Select Your Role</h2>
+        <div class="mode-selector">
+            <div class="mode-button attacker" onclick="initMode('attacker')">
+                <h3>🏴‍☠️ Attacker Mode</h3>
+                <p>Intercept your own DPoP proof and wait for victim's auth code</p>
+            </div>
+            <div class="mode-button victim" onclick="initMode('victim')">
+                <h3>🎯 Victim Mode</h3>
+                <p>Simulate compromised browser that steals credentials</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="controls" class="container" style="display:none;">
+        <h2>Controls</h2>
+        <div id="attacker-controls" style="display:none;">
+            <p><strong>Session ID:</strong> <code id="session-id"></code></p>
+            <button class="btn" onclick="startAttackerFlow()">1. Start OAuth Flow (Login)</button>
+            <button class="btn secondary" onclick="checkStatus()">Check Status</button>
+            <button class="btn" onclick="injectCode()">2. Inject Stolen Code</button>
+        </div>
+        <div id="victim-controls" style="display:none;">
+            <p><strong>Session ID:</strong> <code id="victim-session-id"></code></p>
+            <p>Polling for stolen DPoP proof...</p>
+            <button class="btn secondary" onclick="checkStatus()">Check Status</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>Status</h2>
+        <div id="status" class="status">
+            Ready. Select a mode to begin.
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>Console Log</h2>
+        <div id="log" class="log"></div>
+    </div>
+
+    <script src="/attack.js"></script>
+    <script>
+        let attack = null;
+
+        // Capture console logs
+        const logDiv = document.getElementById('log');
+        const originalLog = console.log;
+        console.log = function(...args) {
+            originalLog.apply(console, args);
+            const message = args.map(arg =>
+                typeof arg === 'object' ? JSON.stringify(arg, null, 2) : arg
+            ).join(' ');
+            logDiv.innerHTML += `<div>${new Date().toLocaleTimeString()} - ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        };
+
+        function initMode(mode) {
+            if (mode === 'attacker') {
+                // Redirect to WebClient AttackDemo page
+                updateStatus('Redirecting to Attacker page...');
+                window.location.href = 'https://localhost:5010/Home/AttackDemo?auto=true';
+            } else {
+                // Redirect to WebClient AttackVictim page
+                updateStatus('Redirecting to Victim page...');
+                window.location.href = 'https://localhost:5010/Home/AttackVictim';
+            }
+        }
+
+        function startAttackerFlow() {
+            updateStatus('Redirecting to OAuth login...');
+            // Redirect to the WebClient's AttackDemo page which will trigger the OAuth flow
+            window.location.href = 'https://localhost:5010/Home/AttackDemo';
+        }
+
+        function injectCode() {
+            if (attack) {
+                attack.injectStolenCode();
+            } else {
+                alert('Please initialize attacker mode first');
+            }
+        }
+
+        async function checkStatus() {
+            if (!attack) return;
+
+            try {
+                const response = await fetch(`https://localhost:7666/api/attack/status/${attack.sessionId}`);
+                const status = await response.json();
+
+                updateStatus(JSON.stringify(status, null, 2));
+                console.log('Status:', status);
+            } catch (error) {
+                console.error('Failed to check status:', error);
+            }
+        }
+
+        function updateStatus(message) {
+            document.getElementById('status').textContent = message;
+        }
+
+        // Check if we're returning from OAuth callback
+        window.addEventListener('load', () => {
+            if (window.attackInstance && window.attackInstance.mode === 'victim') {
+                window.attackInstance.interceptAuthCallback();
+            }
+        });
+    </script>
+</body>
+</html>
+

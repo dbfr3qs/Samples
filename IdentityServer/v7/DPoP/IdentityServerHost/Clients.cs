@@ -27,6 +27,31 @@ public static class Clients
                 AllowedScopes = { "openid", "profile", "scope1" },
 
                 RequireDPoP = true,
+                
+                // Disable PAR for attack demo so dpop_jkt is visible in URL
+                RequirePushedAuthorization = false,
+            },
+            
+            // Public client for attack demo (no client secret required)
+            new Client
+            {
+                ClientId = "dpop_public",
+                RequireClientSecret = false, // Public client
+                
+                AllowedGrantTypes = GrantTypes.Code,
+                
+                RedirectUris = { "https://localhost:5010/signin-oidc" },
+                FrontChannelLogoutUri = "https://localhost:5010/signout-oidc",
+                PostLogoutRedirectUris = { "https://localhost:5010/signout-callback-oidc" },
+                
+                AllowOfflineAccess = true,
+                AllowedScopes = { "openid", "profile", "scope1" },
+                
+                RequireDPoP = true,
+                RequirePkce = true, // Public clients should use PKCE
+                
+                // Disable PAR for attack demo so dpop_jkt is visible in URL
+                RequirePushedAuthorization = false,
             },
         };
 }

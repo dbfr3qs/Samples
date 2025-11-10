@@ -3,9 +3,12 @@
 
 using System.Security.Cryptography;
 using System.Text.Json;
+using Duende.AccessTokenManagement.DPoP;
+using Duende.AccessTokenManagement.OpenIdConnect;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
+using WebClient;
 
 Console.Title = "WebClient";
 
@@ -19,6 +22,14 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddSerilog();
 builder.Services.AddControllersWithViews();
+
+// Create a shared DPoP key for both authorize and token endpoints
+var sharedRsaKey = new RsaSecurityKey(RSA.Create(2048));
+var sharedJwk = JsonWebKeyConverter.ConvertFromSecurityKey(sharedRsaKey);
+sharedJwk.Alg = "PS256";
+
+// Initialize the DPoP proof generator with the shared key
+DPoPProofGenerator.Initialize(sharedRsaKey, sharedJwk);
 
 // add cookie-based session management with OpenID Connect authentication
 builder.Services.AddAuthentication(options =>
@@ -52,6 +63,10 @@ builder.Services.AddAuthentication(options =>
         options.ResponseMode = "query";
         options.UsePkce = true;
 
+        // Disable PAR for attack demo so dpop_jkt is visible in URL
+        options.PushedAuthorizationBehavior =
+            Microsoft.AspNetCore.Authentication.OpenIdConnect.PushedAuthorizationBehavior.Disable;
+
         options.Scope.Clear();
         options.Scope.Add("openid");
         options.Scope.Add("profile");
@@ -77,11 +92,12 @@ builder.Services.AddAuthentication(options =>
 // add automatic token management
 builder.Services.AddOpenIdConnectAccessTokenManagement(options =>
 {
-    // create and configure a DPoP JWK
+    // Use the same DPoP JWK that we're using for the authorize endpoint
     var rsaKey = new RsaSecurityKey(RSA.Create(2048));
-    var jwk = JsonWebKeyConverter.ConvertFromSecurityKey(rsaKey);
-    jwk.Alg = "PS256";
-    options.DPoPJsonWebKey = JsonSerializer.Serialize(jwk);
+    var jwkKey = JsonWebKeyConverter.ConvertFromSecurityKey(rsaKey);
+    jwkKey.Alg = "PS256";
+    var jwk = JsonSerializer.Serialize(jwkKey);
+    options.DPoPJsonWebKey = DPoPProofKey.ParseOrDefault(jwk);
 });
 
 // add HTTP client to call protected API

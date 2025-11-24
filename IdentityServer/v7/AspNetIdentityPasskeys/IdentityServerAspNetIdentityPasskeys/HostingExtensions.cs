@@ -70,9 +70,10 @@ internal static class HostingExtensions
         {
             builder.Services.Configure<IdentityPasskeyOptions>(options =>
             {
-                // Allow https://localhost:5001 origin.
+                // Allow localhost and idp.dev.internal origins for development.
                 options.ValidateOrigin = context => ValueTask.FromResult(
-                    context.Origin == "https://localhost:5001");
+                    context.Origin == "https://localhost:5001" || 
+                    context.Origin == "https://idp.dev.internal:5001");
             });
         }
 

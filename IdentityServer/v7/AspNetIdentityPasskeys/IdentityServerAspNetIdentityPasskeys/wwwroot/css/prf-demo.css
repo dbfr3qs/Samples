@@ -1,0 +1,33 @@
+/* PRF Demo Page Styles */
+
+.prf-demo-page {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 2rem 1rem;
+}
+
+.page-header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.page-header h1 {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+.icon {
+    display: inline-block;
+}
+
+.icon-inline {
+    vertical-align: middle;
+    margin-right: 0.25rem;
+}
+
+code {
+    word-break: break-all;
+    white-space: pre-wrap;
+}

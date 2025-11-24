@@ -1,0 +1,100 @@
+@page
+@model IdentityServerAspNetIdentityPasskeys.Pages.Account.PrfDemoModel
+@{
+    ViewData["Title"] = "PRF Extension Demo";
+}
+
+@section Styles {
+    <link rel="stylesheet" href="~/css/prf-demo.css" asp-append-version="true" />
+}
+
+<div class="prf-demo-page">
+    <div class="page-header">
+        <h1>
+            <svg class="icon icon-inline text-primary" fill="currentColor" viewBox="0 0 24 24" width="36" height="36">
+                <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/>
+            </svg>
+            PRF Extension Demo
+        </h1>
+        <p class="lead">Test the Pseudo-Random Function (PRF) extension with your passkey</p>
+    </div>
+
+    @if (Model.PrfOutput != null)
+    {
+        <div class="alert alert-success" role="alert">
+            <h4 class="alert-heading">✓ PRF Output Received!</h4>
+            <hr>
+            <p><strong>PRF First Output:</strong></p>
+            <code class="d-block p-2 bg-light">@Model.PrfOutput</code>
+            <hr>
+            <p class="mb-0"><small>This cryptographic output was derived from your passkey using the PRF extension.</small></p>
+        </div>
+        
+        <div class="card mb-3">
+            <div class="card-header">
+                <strong>What is this?</strong>
+            </div>
+            <div class="card-body">
+                <p>The PRF (Pseudo-Random Function) extension allows your passkey to generate deterministic cryptographic keys. The output above is a base64-encoded value that:</p>
+                <ul>
+                    <li>Is derived from your passkey credential</li>
+                    <li>Will always be the same for the same input salt</li>
+                    <li>Can be used for client-side encryption</li>
+                    <li>Never leaves your device during generation</li>
+                </ul>
+            </div>
+        </div>
+    }
+    else if (Model.ErrorMessage != null)
+    {
+        <div class="alert alert-danger" role="alert">
+            <h4 class="alert-heading">Error</h4>
+            <p>@Model.ErrorMessage</p>
+        </div>
+    }
+
+    <div class="card">
+        <div class="card-header">
+            <strong>Authenticate with Passkey</strong>
+        </div>
+        <div class="card-body">
+            <p>Click the button below to authenticate with your passkey and see the PRF output.</p>
+            
+            <button type="button" id="authenticateBtn" class="btn btn-primary btn-lg">
+                <svg class="icon icon-inline" fill="currentColor" viewBox="0 0 24 24" width="20" height="20">
+                    <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/>
+                </svg>
+                Authenticate with Passkey
+            </button>
+            <div id="statusMessage" class="mt-3"></div>
+        </div>
+    </div>
+
+    <div class="card mt-3">
+        <div class="card-header">
+            <strong>Technical Details</strong>
+        </div>
+        <div class="card-body">
+            <h5>How it works:</h5>
+            <ol>
+                <li>Click the authenticate button</li>
+                <li>Your browser requests passkey authentication options from the server</li>
+                <li>The server includes the PRF extension with a salt value</li>
+                <li>Your authenticator evaluates the PRF with the salt</li>
+                <li>The PRF output is returned in the authentication response</li>
+                <li>The page displays the derived cryptographic output</li>
+            </ol>
+            
+            <h5 class="mt-3">Use Cases:</h5>
+            <ul>
+                <li><strong>Client-side encryption:</strong> Use the PRF output as an encryption key</li>
+                <li><strong>Key derivation:</strong> Derive multiple keys from a single passkey</li>
+                <li><strong>Secure storage:</strong> Encrypt sensitive data without storing keys</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script src="~/js/prf-demo.js" asp-append-version="true"></script>
+}

@@ -1,6 +1,8 @@
 // Copyright (c) Duende Software. All rights reserved.
 // Licensed under the MIT License. See LICENSE in the project root for license information.
 
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using IdentityServerAspNetIdentityPasskeys.Models;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Identity;
@@ -10,6 +12,17 @@ namespace IdentityServerAspNetIdentityPasskeys.Passkeys;
 
 public static class PasskeyEndpointRouteBuilderExtensions
 {
+    /// <summary>
+    /// Converts a byte array to base64url encoding (RFC 4648 Section 5)
+    /// </summary>
+    private static string ToBase64Url(byte[] bytes)
+    {
+        return Convert.ToBase64String(bytes)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+    }
+
     public static IEndpointConventionBuilder MapPasskeyEndpoints(this IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
@@ -38,6 +51,23 @@ public static class PasskeyEndpointRouteBuilderExtensions
                 Name = userName,
                 DisplayName = userName
             });
+            
+            // Add PRF (Pseudo-Random Function) extension to the creation options
+            var options = JsonNode.Parse(optionsJson);
+            if (options != null)
+            {
+                var extensions = options["extensions"] ?? new JsonObject();
+                extensions["prf"] = new JsonObject
+                {
+                    ["eval"] = new JsonObject
+                    {
+                        ["first"] = ToBase64Url(System.Text.Encoding.UTF8.GetBytes("first-salt"))
+                    }
+                };
+                options["extensions"] = extensions;
+                optionsJson = options.ToJsonString();
+            }
+            
             return TypedResults.Content(optionsJson, contentType: "application/json");
         });
 
@@ -45,13 +75,27 @@ public static class PasskeyEndpointRouteBuilderExtensions
             HttpContext context,
             [FromServices] UserManager<ApplicationUser> userManager,
             [FromServices] SignInManager<ApplicationUser> signInManager,
-            [FromServices] IAntiforgery antiforgery,
             [FromQuery] string? username) =>
         {
-            await antiforgery.ValidateRequestAsync(context);
-
             var user = string.IsNullOrEmpty(username) ? null : await userManager.FindByNameAsync(username);
             var optionsJson = await signInManager.MakePasskeyRequestOptionsAsync(user);
+            
+            // Add PRF (Pseudo-Random Function) extension to the request options
+            var options = JsonNode.Parse(optionsJson);
+            if (options != null)
+            {
+                var extensions = options["extensions"] ?? new JsonObject();
+                extensions["prf"] = new JsonObject
+                {
+                    ["eval"] = new JsonObject
+                    {
+                        ["first"] = ToBase64Url(System.Text.Encoding.UTF8.GetBytes("first-salt"))
+                    }
+                };
+                options["extensions"] = extensions;
+                optionsJson = options.ToJsonString();
+            }
+            
             return TypedResults.Content(optionsJson, contentType: "application/json");
         });
 

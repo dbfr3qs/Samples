@@ -19,6 +19,16 @@ public static class Config
         {
             new ApiScope("scope1"),
             new ApiScope("scope2"),
+            new ApiScope("api", "API Access")
+        };
+
+    public static IEnumerable<ApiResource> ApiResources =>
+        new ApiResource[]
+        {
+            new ApiResource("api", "Sample API")
+            {
+                Scopes = { "api" }
+            }
         };
 
     public static IEnumerable<Client> Clients =>
@@ -33,7 +43,19 @@ public static class Config
                 AllowedGrantTypes = GrantTypes.ClientCredentials,
                 ClientSecrets = { new Secret("511536EF-F270-4058-80CA-1C89C192F69A".Sha256()) },
 
-                AllowedScopes = { "scope1" }
+                AllowedScopes = { "scope1", "api" }
+            },
+
+            // API client for testing
+            new Client
+            {
+                ClientId = "api.client",
+                ClientName = "API Client",
+
+                AllowedGrantTypes = GrantTypes.ClientCredentials,
+                ClientSecrets = { new Secret("api-secret".Sha256()) },
+
+                AllowedScopes = { "api" }
             },
 
             // interactive client using code flow + pkce

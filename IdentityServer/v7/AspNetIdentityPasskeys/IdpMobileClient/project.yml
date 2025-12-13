@@ -1,0 +1,56 @@
+name: IdpMobileClient
+
+options:
+  bundleIdPrefix: com.idp.mobile
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  defaultConfig: Debug
+
+configs:
+  Debug: debug
+  Release: release
+
+packages:
+  IdpMobileClient:
+    path: .
+
+targets:
+  IdpMobileDemoApp:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    
+    sources:
+      - path: Sources/IdpMobileDemoApp
+        name: IdpMobileDemoApp
+    
+    dependencies:
+      - package: IdpMobileClient
+        product: IdpMobileClient
+    
+    scheme:
+      testTargets: []
+      gatherCoverageData: false
+    
+    settings:
+      base:
+        PRODUCT_NAME: IdpMobileDemoApp
+        PRODUCT_BUNDLE_IDENTIFIER: com.idp.mobile.demo
+        INFOPLIST_FILE: Sources/IdpMobileDemoApp/Info.plist
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        ENABLE_PREVIEWS: true
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+        SUPPORTS_MACCATALYST: false
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: false
+      
+      configs:
+        Debug:
+          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+        Release:
+          SWIFT_OPTIMIZATION_LEVEL: "-O"

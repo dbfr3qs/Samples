@@ -55,6 +55,15 @@ internal static class HostingExtensions
     public static WebApplication ConfigureServices(this WebApplicationBuilder builder)
     {
         builder.Services.AddRazorPages();
+        
+        // Add session support for mobile passkey authentication
+        builder.Services.AddDistributedMemoryCache();
+        builder.Services.AddSession(options =>
+        {
+            options.IdleTimeout = TimeSpan.FromMinutes(10);
+            options.Cookie.HttpOnly = true;
+            options.Cookie.IsEssential = true;
+        });
 
         builder.Services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
@@ -73,7 +82,9 @@ internal static class HostingExtensions
                 // Allow localhost and idp.dev.internal origins for development.
                 options.ValidateOrigin = context => ValueTask.FromResult(
                     context.Origin == "https://localhost:5001" || 
-                    context.Origin == "https://idp.dev.internal:5001");
+                    context.Origin == "https://localhost" ||
+                    context.Origin == "https://idp.dev.internal:5001" ||
+                    context.Origin == "https://idp.dev.internal");
             });
         }
 
@@ -131,11 +142,31 @@ internal static class HostingExtensions
         }
 
         app.UseStaticFiles();
+        
+        // Serve Apple App Site Association file with correct content type
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            ServeUnknownFileTypes = true,
+            DefaultContentType = "application/json",
+            OnPrepareResponse = ctx =>
+            {
+                if (ctx.File.Name == "apple-app-site-association")
+                {
+                    ctx.Context.Response.Headers.Append("Content-Type", "application/json");
+                }
+            }
+        });
+        
         app.UseRouting();
+        
+        // Enable session for passkey challenge storage
+        app.UseSession();
+        
         app.UseIdentityServer();
         app.UseAuthorization();
 
         app.MapPasskeyEndpoints();
+        app.MapMobilePasskeyEndpoints(); // Add mobile passkey endpoints
 
         app.MapRazorPages()
             .RequireAuthorization();

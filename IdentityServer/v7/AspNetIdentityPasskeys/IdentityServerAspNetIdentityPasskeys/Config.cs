@@ -73,5 +73,26 @@ public static class Config
                 AllowOfflineAccess = true,
                 AllowedScopes = { "openid", "profile", "scope2" }
             },
+
+            // mobile native client using code flow + pkce
+            new Client
+            {
+                ClientId = "mobile-client",
+                ClientName = "Mobile Native Client",
+
+                AllowedGrantTypes = GrantTypes.Code,
+                RequireClientSecret = false, // Public client (native mobile app)
+                RequirePkce = true,
+
+                RedirectUris = { "com.idp.mobile://callback" },
+                PostLogoutRedirectUris = { "com.idp.mobile://callback" },
+
+                AllowOfflineAccess = true, // Enable refresh tokens
+                RefreshTokenUsage = TokenUsage.ReUse,
+                RefreshTokenExpiration = TokenExpiration.Sliding,
+                SlidingRefreshTokenLifetime = 1296000, // 15 days
+
+                AllowedScopes = { "openid", "profile", "api" }
+            },
         };
 }

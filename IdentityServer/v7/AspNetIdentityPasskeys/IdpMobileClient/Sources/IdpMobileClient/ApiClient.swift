@@ -15,27 +15,51 @@ public final class ApiClient: @unchecked Sendable {
     
     /// Make an authenticated GET request to the API
     public func get(path: String) async throws -> Data {
+        print("🌐 [ApiClient] Getting valid access token...")
         let accessToken = try await oauthClient.getValidAccessToken()
+        print("✅ [ApiClient] Got access token: \(accessToken.prefix(20))...")
         
         guard let url = URL(string: "\(apiBaseURL)\(path)") else {
+            print("❌ [ApiClient] Invalid URL: \(apiBaseURL)\(path)")
             throw ApiError.invalidURL
         }
+        
+        print("🌐 [ApiClient] Making GET request to: \(url)")
         
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ApiError.invalidResponse
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                print("❌ [ApiClient] Invalid response type")
+                throw ApiError.invalidResponse
+            }
+            
+            print("📡 [ApiClient] Response status: \(httpResponse.statusCode)")
+            
+            guard (200...299).contains(httpResponse.statusCode) else {
+                print("❌ [ApiClient] HTTP error: \(httpResponse.statusCode)")
+                let responseBody = String(data: data, encoding: .utf8) ?? "Unable to decode"
+                print("📄 [ApiClient] Response body: \(responseBody)")
+                throw ApiError.httpError(statusCode: httpResponse.statusCode)
+            }
+            
+            let responseBody = String(data: data, encoding: .utf8) ?? "Unable to decode"
+            print("✅ [ApiClient] Success! Response: \(responseBody.prefix(200))...")
+            
+            return data
+        } catch let error as URLError {
+            print("❌ [ApiClient] URLError: \(error.localizedDescription)")
+            print("❌ [ApiClient] URLError code: \(error.code.rawValue)")
+            print("❌ [ApiClient] URLError domain: \(error.errorCode)")
+            throw error
+        } catch {
+            print("❌ [ApiClient] Unexpected error: \(error)")
+            throw error
         }
-        
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw ApiError.httpError(statusCode: httpResponse.statusCode)
-        }
-        
-        return data
     }
     
     /// Make an authenticated POST request to the API
@@ -70,7 +94,7 @@ public final class ApiClient: @unchecked Sendable {
     
     /// Convenience method to call a test endpoint
     public func callTestEndpoint() async throws -> String {
-        let data = try await get(path: "/test")
+        let data = try await get(path: "/claims")
         return String(data: data, encoding: .utf8) ?? ""
     }
 }

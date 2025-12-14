@@ -5,9 +5,11 @@
       "commandName": "Project",
       "dotnetRunMessages": true,
       "launchBrowser": false,
-      "applicationUrl": "https://localhost:6001",
+      "applicationUrl": "https://api.dev.internal:5002;https://localhost:5002",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_Kestrel__Certificates__Default__Path": "certs/api-dev-cert.pfx",
+        "ASPNETCORE_Kestrel__Certificates__Default__Password": "dev-password"
       }
     }
   }

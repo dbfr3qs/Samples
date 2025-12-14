@@ -231,7 +231,7 @@ class AuthViewModel: NSObject, ObservableObject {
     private var authController: ASAuthorizationController?
     @Published var currentCodeVerifier: String?
     @Published var currentState: String?
-    @Published var currentChallenge: String?
+    @Published var currentChallengeId: String?
     
     override init() {
         super.init()
@@ -253,7 +253,8 @@ class AuthViewModel: NSObject, ObservableObject {
             print("🔐 [Passkey] Requesting registration options from IdP...")
             let options = try await passkeyService.beginRegistration(username: username, email: email)
             print("✅ [Passkey] Received challenge: \(options.challenge.prefix(20))...")
-            currentChallenge = options.challenge
+            print("✅ [Passkey] Received challengeId: \(options.challengeId)")
+            currentChallengeId = options.challengeId
             
             // Step 2: Create and present passkey registration request
             print("🔐 [Passkey] Creating registration request...")
@@ -294,7 +295,8 @@ class AuthViewModel: NSObject, ObservableObject {
             print("🔐 [Passkey] Requesting authentication options from IdP...")
             let options = try await passkeyService.beginAuthentication()
             print("✅ [Passkey] Received challenge: \(options.challenge.prefix(20))...")
-            currentChallenge = options.challenge
+            print("✅ [Passkey] Received challengeId: \(options.challengeId)")
+            currentChallengeId = options.challengeId
             
             // Step 3: Create and present passkey authentication request
             print("🔐 [Passkey] Creating authentication request...")
@@ -344,16 +346,17 @@ class AuthViewModel: NSObject, ObservableObject {
     
     private func handleRegistrationSuccess(credential: ASAuthorizationPlatformPublicKeyCredentialRegistration) async {
         do {
-            guard let challenge = currentChallenge else {
+            guard let challengeId = currentChallengeId else {
                 throw PasskeyError.invalidChallenge
             }
             
             print("✅ [Passkey] Registration credential received")
+            print("🔑 [Passkey] Using challengeId: \(challengeId)")
             
             // Complete registration with IdP
             try await passkeyService.completeRegistration(
                 credential: credential,
-                challenge: challenge
+                challengeId: challengeId
             )
             
             print("✅ [Passkey] Registration completed successfully!")
@@ -376,11 +379,11 @@ class AuthViewModel: NSObject, ObservableObject {
         do {
             print("🔐 [Passkey] Starting handleAuthenticationSuccess")
             
-            guard let challenge = currentChallenge else {
-                print("❌ [Passkey] No challenge found")
+            guard let challengeId = currentChallengeId else {
+                print("❌ [Passkey] No challengeId found")
                 throw PasskeyError.invalidChallenge
             }
-            print("✅ [Passkey] Challenge found: \(challenge.prefix(20))...")
+            print("✅ [Passkey] ChallengeId found: \(challengeId)")
             
             guard let verifier = currentCodeVerifier else {
                 print("❌ [Passkey] No code verifier found")
@@ -400,7 +403,7 @@ class AuthViewModel: NSObject, ObservableObject {
             print("🔐 [Passkey] Calling completeAuthentication...")
             let result = try await passkeyService.completeAuthentication(
                 credential: credential,
-                challenge: challenge,
+                challengeId: challengeId,
                 codeChallenge: codeChallenge
             )
             print("✅ [Passkey] Authentication completed, received code: \(result.code.prefix(20))...")

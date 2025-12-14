@@ -3,6 +3,7 @@ using System;
 using IdentityServerAspNetIdentityPasskeys.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace IdentityServerAspNetIdentityPasskeys.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251214220320_AddPasskeyChallenges")]
+    partial class AddPasskeyChallenges
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.0-rc.2.25502.107");
@@ -114,55 +117,6 @@ namespace IdentityServerAspNetIdentityPasskeys.Data.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("PasskeyChallenges");
-                });
-
-            modelBuilder.Entity("IdentityServerAspNetIdentityPasskeys.Models.PasskeyCredential", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<Guid>("AaGuid")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("AttestationFormat")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("CredType")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<byte[]>("CredentialId")
-                        .IsRequired()
-                        .HasColumnType("BLOB");
-
-                    b.Property<string>("DeviceType")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<byte[]>("PublicKey")
-                        .IsRequired()
-                        .HasColumnType("BLOB");
-
-                    b.Property<uint>("SignatureCounter")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("UserId")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CredentialId")
-                        .IsUnique();
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("PasskeyCredentials");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>

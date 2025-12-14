@@ -48,9 +48,12 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
     /// Complete passkey registration with credential
     public func completeRegistration(
         credential: ASAuthorizationPlatformPublicKeyCredentialRegistration,
-        challenge: String
+        challengeId: String
     ) async throws {
         let url = URL(string: "\(idpBaseURL)/api/passkey/register/complete")!
+        
+        print("🌐 [PasskeyService] POST \(url)")
+        print("🔑 [PasskeyService] Challenge ID: \(challengeId)")
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -71,16 +74,30 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
         let credentialJsonData = try JSONEncoder().encode(credentialData)
         let credentialJsonString = String(data: credentialJsonData, encoding: .utf8) ?? ""
         
-        // Wrap in the expected request format
-        let requestBody = ["credentialJson": credentialJsonString]
+        // Wrap in the expected request format with challengeId
+        let requestBody = [
+            "challengeId": challengeId,
+            "credentialJson": credentialJsonString
+        ]
         request.httpBody = try JSONEncoder().encode(requestBody)
         
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.data(for: request)
         
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            print("❌ [PasskeyService] Invalid response type")
             throw PasskeyError.registrationFailed
         }
+        
+        print("📡 [PasskeyService] Response status: \(httpResponse.statusCode)")
+        
+        guard httpResponse.statusCode == 200 else {
+            let responseBody = String(data: data, encoding: .utf8) ?? "Unable to decode response"
+            print("❌ [PasskeyService] Registration failed with status \(httpResponse.statusCode)")
+            print("📄 [PasskeyService] Response body: \(responseBody)")
+            throw PasskeyError.registrationFailed
+        }
+        
+        print("✅ [PasskeyService] Registration completed successfully")
     }
     
     // MARK: - Passkey Authentication
@@ -131,11 +148,14 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
     /// Returns authorization code that can be exchanged for tokens
     public func completeAuthentication(
         credential: ASAuthorizationPlatformPublicKeyCredentialAssertion,
-        challenge: String,
+        challengeId: String,
         codeChallenge: String,
         codeChallengeMethod: String = "S256"
     ) async throws -> AuthenticationResult {
         let url = URL(string: "\(idpBaseURL)/api/passkey/authenticate/complete")!
+        
+        print("🌐 [PasskeyService] POST \(url)")
+        print("🔑 [PasskeyService] Challenge ID: \(challengeId)")
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -158,8 +178,9 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
         let credentialJsonData = try JSONEncoder().encode(credentialData)
         let credentialJsonString = String(data: credentialJsonData, encoding: .utf8) ?? ""
         
-        // Wrap in the expected request format with PKCE parameters
+        // Wrap in the expected request format with PKCE parameters and challengeId
         let requestBody: [String: String] = [
+            "challengeId": challengeId,
             "credentialJson": credentialJsonString,
             "codeChallenge": codeChallenge,
             "codeChallengeMethod": codeChallengeMethod
@@ -172,11 +193,21 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            print("❌ [PasskeyService] Invalid response type")
             throw PasskeyError.authenticationFailed
         }
         
+        print("📡 [PasskeyService] Response status: \(httpResponse.statusCode)")
+        
+        guard httpResponse.statusCode == 200 else {
+            let responseBody = String(data: data, encoding: .utf8) ?? "Unable to decode response"
+            print("❌ [PasskeyService] Authentication failed with status \(httpResponse.statusCode)")
+            print("📄 [PasskeyService] Response body: \(responseBody)")
+            throw PasskeyError.authenticationFailed
+        }
+        
+        print("✅ [PasskeyService] Authentication completed successfully")
         return try JSONDecoder().decode(AuthenticationResult.self, from: data)
     }
     
@@ -225,6 +256,7 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
 
 public struct RegistrationOptions: Codable, Sendable {
     public let challenge: String
+    public let challengeId: String
     public let rp: RelyingParty
     public let user: User
     public let timeout: Int?
@@ -243,6 +275,7 @@ public struct RegistrationOptions: Codable, Sendable {
 
 public struct AuthenticationOptions: Codable, Sendable {
     public let challenge: String
+    public let challengeId: String
     public let timeout: Int?
     public let rpId: String?
 }

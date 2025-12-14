@@ -3,9 +3,11 @@
 
 using System.Globalization;
 using Duende.IdentityServer;
+using Fido2NetLib;
 using IdentityServerAspNetIdentityPasskeys.Data;
 using IdentityServerAspNetIdentityPasskeys.Models;
 using IdentityServerAspNetIdentityPasskeys.Passkeys;
+using IdentityServerAspNetIdentityPasskeys.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -88,6 +90,32 @@ internal static class HostingExtensions
             });
         }
 
+        // Configure Fido2 for native passkey support
+        builder.Services.AddSingleton<IFido2>(sp =>
+        {
+            return new Fido2(new Fido2Configuration
+            {
+                ServerDomain = "idp.dev.internal",
+                ServerName = "Identity Server",
+                Origins = new HashSet<string>
+                {
+                    "https://idp.dev.internal",
+                    "https://idp.dev.internal:5001",
+                    "https://localhost:5001",
+                    "https://localhost",
+                    "ios:bundle-id://com.idp.mobile",
+                    "ios:bundle-id://com.idp.mobiledemo"
+                },
+                TimestampDriftTolerance = 60000
+            });
+        });
+
+        // Register passkey services
+        builder.Services.AddScoped<IChallengeStore, ChallengeStore>();
+        builder.Services.AddScoped<ICredentialStore, CredentialStore>();
+        builder.Services.AddSingleton<NativeOriginValidator>();
+        builder.Services.AddHostedService<ChallengeCleanupService>();
+
         builder.Services
             .AddIdentityServer(options =>
             {
@@ -166,7 +194,7 @@ internal static class HostingExtensions
         app.UseAuthorization();
 
         app.MapPasskeyEndpoints();
-        app.MapMobilePasskeyEndpoints(); // Add mobile passkey endpoints
+        app.MapMobilePasskeyEndpoints(); // Mobile passkey endpoints with full FIDO2/WebAuthn cryptographic validation
 
         app.MapRazorPages()
             .RequireAuthorization();

@@ -1,9 +1,14 @@
 // Mobile Passkey Authentication Endpoints for OAuth/OIDC flow
+// Now with full FIDO2/WebAuthn cryptographic validation
 
+using System.Text;
 using System.Text.Json;
 using System.Security.Claims;
+using Fido2NetLib;
+using Fido2NetLib.Objects;
 using IdentityServerAspNetIdentityPasskeys.Models;
 using IdentityServerAspNetIdentityPasskeys.Data;
+using IdentityServerAspNetIdentityPasskeys.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -21,29 +26,38 @@ public static class MobilePasskeyEndpoints
 
         var apiGroup = endpoints.MapGroup("/api/passkey").ExcludeFromDescription();
 
-        // Begin registration - returns WebAuthn creation options
+        // Begin registration - returns WebAuthn creation options with FIDO2 validation
         apiGroup.MapPost("/register/begin", async (
             HttpContext context,
-            [FromServices] SignInManager<ApplicationUser> signInManager,
+            [FromServices] IFido2 fido2,
+            [FromServices] IChallengeStore challengeStore,
+            [FromServices] ICredentialStore credentialStore,
             [FromServices] UserManager<ApplicationUser> userManager,
             [FromBody] BeginRegistrationRequest request) =>
         {
             try
             {
+                Console.WriteLine($"[DEBUG] Registration begin for username: {request.Username}");
+
                 if (string.IsNullOrEmpty(request.Username))
                 {
                     return Results.BadRequest(new { error = "Username is required" });
                 }
 
-                // Check if user exists, create if not
                 var user = await userManager.FindByNameAsync(request.Username);
                 if (user == null)
                 {
-                    user = new ApplicationUser { UserName = request.Username, Email = request.Email };
+                    Console.WriteLine($"[DEBUG] Creating new user: {request.Username}");
+                    user = new ApplicationUser
+                    {
+                        UserName = request.Username,
+                        Email = request.Email
+                    };
                     var createResult = await userManager.CreateAsync(user);
                     if (!createResult.Succeeded)
                     {
-                        return Results.BadRequest(new {
+                        return Results.BadRequest(new
+                        {
                             error = "Failed to create user",
                             details = createResult.Errors.Select(e => e.Description)
                         });
@@ -53,25 +67,63 @@ public static class MobilePasskeyEndpoints
                 var userId = await userManager.GetUserIdAsync(user);
                 var userName = await userManager.GetUserNameAsync(user) ?? "User";
 
-                var optionsJson = await signInManager.MakePasskeyCreationOptionsAsync(new()
+                var existingCreds = await credentialStore.GetByUserIdAsync(userId);
+                var excludeCredentials = existingCreds
+                    .Select(c => new PublicKeyCredentialDescriptor(c.CredentialId))
+                    .ToList();
+
+                Console.WriteLine($"[DEBUG] User has {existingCreds.Count} existing credentials");
+
+                var fidoUser = new Fido2User
                 {
-                    Id = userId,
+                    Id = Encoding.UTF8.GetBytes(userId),
                     Name = userName,
                     DisplayName = request.DisplayName ?? userName
+                };
+
+                var options = fido2.RequestNewCredential(
+                    fidoUser,
+                    excludeCredentials,
+                    new AuthenticatorSelection
+                    {
+                        AuthenticatorAttachment = AuthenticatorAttachment.Platform,
+                        ResidentKey = ResidentKeyRequirement.Required,
+                        UserVerification = UserVerificationRequirement.Required
+                    },
+                    AttestationConveyancePreference.Direct
+                );
+
+                var challengeId = await challengeStore.StoreAsync(new ChallengeData
+                {
+                    Challenge = options.Challenge,
+                    UserId = userId,
+                    ClientType = "mobile-ios",
+                    CreatedAt = DateTime.UtcNow,
+                    ExpiresAt = DateTime.UtcNow.AddMinutes(5)
                 });
 
-                // Store the challenge in session for later verification
-                var options = JsonDocument.Parse(optionsJson);
-                var challenge = options.RootElement.GetProperty("challenge").GetString();
+                Console.WriteLine($"[DEBUG] Generated challenge ID: {challengeId}");
 
-                // Store challenge and user ID in session
-                context.Session.SetString("passkey_reg_challenge", challenge ?? "");
-                context.Session.SetString("passkey_reg_user_id", userId);
-
-                return Results.Content(optionsJson, contentType: "application/json");
+                return Results.Ok(new
+                {
+                    challenge = Base64Url.Encode(options.Challenge),
+                    rp = new { id = options.Rp.Id, name = options.Rp.Name },
+                    user = new
+                    {
+                        id = Base64Url.Encode(fidoUser.Id),
+                        name = fidoUser.Name,
+                        displayName = fidoUser.DisplayName
+                    },
+                    pubKeyCredParams = options.PubKeyCredParams,
+                    timeout = options.Timeout,
+                    authenticatorSelection = options.AuthenticatorSelection,
+                    attestation = options.Attestation.ToString().ToLower(),
+                    challengeId = challengeId
+                });
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"[ERROR] Registration begin failed: {ex.Message}");
                 return Results.Problem(
                     detail: ex.Message,
                     statusCode: 500,
@@ -80,90 +132,153 @@ public static class MobilePasskeyEndpoints
             }
         });
 
-        // Complete registration - verifies passkey and stores it
+        // Complete registration - performs FULL FIDO2 attestation verification
         apiGroup.MapPost("/register/complete", async (
             HttpContext context,
-            [FromServices] SignInManager<ApplicationUser> signInManager,
+            [FromServices] IFido2 fido2,
+            [FromServices] IChallengeStore challengeStore,
+            [FromServices] ICredentialStore credentialStore,
             [FromServices] UserManager<ApplicationUser> userManager,
-            [FromServices] ApplicationDbContext dbContext,
+            [FromServices] NativeOriginValidator originValidator,
             [FromBody] CompleteRegistrationRequest request) =>
         {
             try
             {
-                Console.WriteLine($"[DEBUG] Received credentialJson: {request?.CredentialJson?.Substring(0, Math.Min(100, request.CredentialJson?.Length ?? 0))}...");
+                Console.WriteLine($"[DEBUG] Registration complete - challenge ID: {request.ChallengeId}");
 
-                // Verify the challenge matches
-                var storedChallenge = context.Session.GetString("passkey_reg_challenge");
-                var storedUserId = context.Session.GetString("passkey_reg_user_id");
-
-                Console.WriteLine($"[DEBUG] Stored challenge: {storedChallenge}");
-                Console.WriteLine($"[DEBUG] Stored userId: {storedUserId}");
-
-                if (string.IsNullOrEmpty(storedChallenge) || string.IsNullOrEmpty(storedUserId))
+                var challengeData = await challengeStore.GetAndRemoveAsync(request.ChallengeId);
+                if (challengeData == null || challengeData.IsExpired)
                 {
-                    Console.WriteLine("[ERROR] No registration session found");
-                    return Results.BadRequest(new { error = "No registration session found" });
+                    Console.WriteLine("[ERROR] Challenge expired or not found");
+                    return Results.BadRequest(new { error = "Challenge expired or not found" });
                 }
 
-                // Get the user
-                var user = await userManager.FindByIdAsync(storedUserId);
+                var user = await userManager.FindByIdAsync(challengeData.UserId!);
                 if (user == null)
                 {
                     Console.WriteLine("[ERROR] User not found");
                     return Results.BadRequest(new { error = "User not found" });
                 }
 
-                Console.WriteLine("[DEBUG] Performing passkey attestation...");
-                // Perform passkey attestation
-                var attestationResult = await signInManager.PerformPasskeyAttestationAsync(request.CredentialJson);
-                Console.WriteLine($"[DEBUG] Attestation succeeded: {attestationResult.Succeeded}");
-                if (!attestationResult.Succeeded)
+                // Parse the credential JSON - it comes as a JSON string from the mobile app
+                Console.WriteLine($"[DEBUG] Parsing credential JSON (length: {request.CredentialJson.Length})");
+                
+                // First parse to get the credential structure
+                var credentialDoc = JsonDocument.Parse(request.CredentialJson);
+                var credentialRoot = credentialDoc.RootElement;
+                
+                // Extract the raw credential data
+                var id = credentialRoot.GetProperty("id").GetString();
+                var rawId = credentialRoot.GetProperty("rawId").GetString();
+                var type = credentialRoot.GetProperty("type").GetString();
+                var response = credentialRoot.GetProperty("response");
+                var clientDataJSON = response.GetProperty("clientDataJSON").GetString();
+                var attestationObject = response.GetProperty("attestationObject").GetString();
+                
+                Console.WriteLine($"[DEBUG] Credential ID: {id?.Substring(0, Math.Min(20, id?.Length ?? 0))}...");
+                
+                // Create the AuthenticatorAttestationRawResponse that Fido2-Net-Lib expects
+                var credential = new AuthenticatorAttestationRawResponse
                 {
-                    Console.WriteLine($"[ERROR] Passkey attestation failed: {attestationResult.Failure?.Message}");
-                    return Results.BadRequest(new {
-                        error = "Passkey registration failed",
-                        detail = attestationResult.Failure?.Message
+                    Id = Base64Url.Decode(id),
+                    RawId = Base64Url.Decode(rawId),
+                    Type = PublicKeyCredentialType.PublicKey,
+                    Response = new AuthenticatorAttestationRawResponse.ResponseData
+                    {
+                        ClientDataJson = Base64Url.Decode(clientDataJSON),
+                        AttestationObject = Base64Url.Decode(attestationObject)
+                    }
+                };
+
+                if (credential == null)
+                {
+                    return Results.BadRequest(new { error = "Invalid credential data" });
+                }
+
+                var options = new CredentialCreateOptions
+                {
+                    Challenge = challengeData.Challenge,
+                    Rp = new PublicKeyCredentialRpEntity("idp.dev.internal", "Identity Server", null),
+                    User = new Fido2User
+                    {
+                        Id = Encoding.UTF8.GetBytes(challengeData.UserId!),
+                        Name = user.UserName ?? "User",
+                        DisplayName = user.UserName ?? "User"
+                    },
+                    PubKeyCredParams = new List<PubKeyCredParam>
+                    {
+                        new PubKeyCredParam(COSE.Algorithm.ES256),
+                        new PubKeyCredParam(COSE.Algorithm.RS256)
+                    },
+                    Timeout = 60000,
+                    Attestation = AttestationConveyancePreference.Direct,
+                    AuthenticatorSelection = new AuthenticatorSelection
+                    {
+                        AuthenticatorAttachment = AuthenticatorAttachment.Platform,
+                        ResidentKey = ResidentKeyRequirement.Required,
+                        UserVerification = UserVerificationRequirement.Required
+                    }
+                };
+
+                Console.WriteLine("[DEBUG] ✅ Performing FULL FIDO2 attestation verification...");
+                var result = await fido2.MakeNewCredentialAsync(
+                    credential,
+                    options,
+                    async (args, cancellationToken) =>
+                    {
+                        var existingCreds = await credentialStore.GetByUserIdAsync(challengeData.UserId!);
+                        return !existingCreds.Any(c => c.CredentialId.SequenceEqual(args.CredentialId));
+                    },
+                    cancellationToken: CancellationToken.None
+                );
+
+                if (result.Status != "ok")
+                {
+                    Console.WriteLine($"[ERROR] ❌ Attestation verification failed: {result.ErrorMessage}");
+                    return Results.BadRequest(new
+                    {
+                        error = "Attestation verification failed",
+                        detail = result.ErrorMessage
                     });
                 }
 
-                // Store the passkey
-                Console.WriteLine($"[DEBUG] Storing passkey for user {user.Id}...");
-                Console.WriteLine($"[DEBUG] Passkey credential ID: {Convert.ToBase64String(attestationResult.Passkey.CredentialId)}");
-                var setPasskeyResult = await userManager.AddOrUpdatePasskeyAsync(user, attestationResult.Passkey);
-                Console.WriteLine($"[DEBUG] Store passkey result succeeded: {setPasskeyResult.Succeeded}");
-                if (!setPasskeyResult.Succeeded)
+                if (result.Result == null)
                 {
-                    Console.WriteLine($"[ERROR] Failed to store passkey: {string.Join(", ", setPasskeyResult.Errors.Select(e => e.Description))}");
-                    return Results.BadRequest(new { error = "Failed to store passkey" });
+                    return Results.BadRequest(new { error = "Attestation result is null" });
                 }
 
-                // Explicitly save changes to database
-                Console.WriteLine("[DEBUG] Saving changes to database...");
-                await dbContext.SaveChangesAsync();
-                Console.WriteLine("[DEBUG] Passkey stored successfully and changes saved to database");
+                Console.WriteLine($"[DEBUG] ✅ Attestation verified successfully");
+                Console.WriteLine($"[DEBUG] Credential ID: {Convert.ToBase64String(result.Result.Id)}");
+                Console.WriteLine($"[DEBUG] Counter: {result.Result.SignCount}");
+                Console.WriteLine($"[DEBUG] Attestation format: {result.Result.AttestationFormat}");
 
-                // Clear session
-                context.Session.Remove("passkey_reg_challenge");
-                context.Session.Remove("passkey_reg_user_id");
+                await credentialStore.AddAsync(new StoredCredential
+                {
+                    UserId = challengeData.UserId!,
+                    CredentialId = result.Result.Id,
+                    PublicKey = result.Result.PublicKey,
+                    SignatureCounter = result.Result.SignCount,
+                    CredType = result.Result.Type.ToString(),
+                    AaGuid = result.Result.AaGuid,
+                    AttestationFormat = result.Result.AttestationFormat,
+                    DeviceType = "iOS Platform Authenticator",
+                    CreatedAt = DateTime.UtcNow
+                });
+
+                Console.WriteLine("[DEBUG] Credential stored successfully");
 
                 return Results.Ok(new
                 {
                     success = true,
                     userId = user.Id,
                     username = user.UserName,
-                    message = "Passkey registered successfully"
+                    message = "Passkey registered successfully with full cryptographic verification"
                 });
             }
             catch (Exception ex)
             {
-                // Log the full exception for debugging
-                Console.WriteLine($"[ERROR] Passkey registration failed: {ex.Message}");
+                Console.WriteLine($"[ERROR] Registration failed: {ex.Message}");
                 Console.WriteLine($"[ERROR] Stack trace: {ex.StackTrace}");
-                if (ex.InnerException != null)
-                {
-                    Console.WriteLine($"[ERROR] Inner exception: {ex.InnerException.Message}");
-                }
-
                 return Results.Problem(
                     detail: ex.Message,
                     statusCode: 500,
@@ -172,29 +287,44 @@ public static class MobilePasskeyEndpoints
             }
         });
 
-        // Begin authentication - returns WebAuthn options
+        // Begin authentication - returns WebAuthn options with FIDO2 validation
         apiGroup.MapPost("/authenticate/begin", async (
             HttpContext context,
-            [FromServices] SignInManager<ApplicationUser> signInManager,
+            [FromServices] IFido2 fido2,
+            [FromServices] IChallengeStore challengeStore,
             [FromBody] BeginAuthenticationRequest? request) =>
         {
             try
             {
-                // Get passkey request options (challenge, etc.)
-                // This works without a logged-in user
-                var optionsJson = await signInManager.MakePasskeyRequestOptionsAsync(null);
+                Console.WriteLine("[DEBUG] Authentication begin");
 
-                // Store the challenge in session for later verification
-                var options = JsonDocument.Parse(optionsJson);
-                var challenge = options.RootElement.GetProperty("challenge").GetString();
+                var options = fido2.GetAssertionOptions(
+                    null,
+                    UserVerificationRequirement.Required
+                );
 
-                // Store challenge in session
-                context.Session.SetString("passkey_challenge", challenge ?? "");
+                var challengeId = await challengeStore.StoreAsync(new ChallengeData
+                {
+                    Challenge = options.Challenge,
+                    ClientType = "mobile-ios",
+                    CreatedAt = DateTime.UtcNow,
+                    ExpiresAt = DateTime.UtcNow.AddMinutes(5)
+                });
 
-                return Results.Content(optionsJson, contentType: "application/json");
+                Console.WriteLine($"[DEBUG] Generated challenge ID: {challengeId}");
+
+                return Results.Ok(new
+                {
+                    challenge = Base64Url.Encode(options.Challenge),
+                    timeout = options.Timeout,
+                    rpId = options.RpId,
+                    userVerification = options.UserVerification.ToString().ToLower(),
+                    challengeId = challengeId
+                });
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"[ERROR] Authentication begin failed: {ex.Message}");
                 return Results.Problem(
                     detail: ex.Message,
                     statusCode: 500,
@@ -203,112 +333,237 @@ public static class MobilePasskeyEndpoints
             }
         });
 
-        // Complete authentication - verifies passkey and returns authorization code
+        // Complete authentication - performs FULL FIDO2 assertion verification with signature validation
         apiGroup.MapPost("/authenticate/complete", async (
             HttpContext context,
+            [FromServices] IFido2 fido2,
+            [FromServices] IChallengeStore challengeStore,
+            [FromServices] ICredentialStore credentialStore,
             [FromServices] SignInManager<ApplicationUser> signInManager,
             [FromServices] UserManager<ApplicationUser> userManager,
-            [FromServices] ApplicationDbContext dbContext,
+            [FromServices] NativeOriginValidator originValidator,
             [FromServices] IAuthorizationCodeStore codeStore,
-            [FromServices] IClientStore clientStore,
             [FromBody] CompleteAuthenticationRequest request) =>
         {
             try
             {
-                Console.WriteLine($"[DEBUG] Auth - Received credentialJson: {request?.CredentialJson?.Substring(0, Math.Min(100, request.CredentialJson?.Length ?? 0))}...");
+                Console.WriteLine($"[DEBUG] Auth - Received authentication completion request");
 
-                // Parse and log credential details
-                var credentialDoc = JsonDocument.Parse(request.CredentialJson);
-                var clientDataJSON = credentialDoc.RootElement.GetProperty("response").GetProperty("clientDataJSON").GetString();
-
-                // Convert base64url to base64 with proper padding
-                var clientDataBase64 = clientDataJSON!.Replace('_', '/').Replace('-', '+');
-                switch (clientDataBase64.Length % 4)
+                var challengeData = await challengeStore.GetAndRemoveAsync(request.ChallengeId!);
+                if (challengeData == null || challengeData.IsExpired)
                 {
-                    case 2: clientDataBase64 += "=="; break;
-                    case 3: clientDataBase64 += "="; break;
+                    Console.WriteLine("[ERROR] Auth - Challenge expired or not found");
+                    return Results.BadRequest(new { error = "Challenge expired" });
                 }
 
-                var clientDataBytes = Convert.FromBase64String(clientDataBase64);
-                var clientDataString = System.Text.Encoding.UTF8.GetString(clientDataBytes);
-                Console.WriteLine($"[DEBUG] Auth - Client data: {clientDataString}");
-
-                // Verify the challenge matches
-                var storedChallenge = context.Session.GetString("passkey_challenge");
-                Console.WriteLine($"[DEBUG] Auth - Stored challenge: {storedChallenge}");
-
-                if (string.IsNullOrEmpty(storedChallenge))
+                // Parse the assertion JSON - it comes as a JSON string from the mobile app
+                Console.WriteLine($"[DEBUG] Auth - Parsing credential JSON (length: {request.CredentialJson.Length})");
+                
+                var assertionDoc = JsonDocument.Parse(request.CredentialJson);
+                var assertionRoot = assertionDoc.RootElement;
+                
+                // Extract the raw assertion data
+                var id = assertionRoot.GetProperty("id").GetString();
+                var rawId = assertionRoot.GetProperty("rawId").GetString();
+                var type = assertionRoot.GetProperty("type").GetString();
+                var response = assertionRoot.GetProperty("response");
+                var clientDataJSON = response.GetProperty("clientDataJSON").GetString();
+                var authenticatorData = response.GetProperty("authenticatorData").GetString();
+                var signature = response.GetProperty("signature").GetString();
+                var userHandle = response.GetProperty("userHandle").GetString();
+                
+                Console.WriteLine($"[DEBUG] Auth - Credential ID: {id?.Substring(0, Math.Min(20, id?.Length ?? 0))}...");
+                
+                // Create the AuthenticatorAssertionRawResponse that Fido2-Net-Lib expects
+                var assertion = new AuthenticatorAssertionRawResponse
                 {
-                    Console.WriteLine("[ERROR] Auth - No challenge found in session");
-                    return Results.BadRequest(new { error = "No challenge found in session" });
+                    Id = Base64Url.Decode(id),
+                    RawId = Base64Url.Decode(rawId),
+                    Type = PublicKeyCredentialType.PublicKey,
+                    Response = new AuthenticatorAssertionRawResponse.AssertionResponse
+                    {
+                        ClientDataJson = Base64Url.Decode(clientDataJSON),
+                        AuthenticatorData = Base64Url.Decode(authenticatorData),
+                        Signature = Base64Url.Decode(signature),
+                        UserHandle = Base64Url.Decode(userHandle)
+                    }
+                };
+
+                if (assertion == null)
+                {
+                    return Results.BadRequest(new { error = "Invalid credential data" });
                 }
 
-                Console.WriteLine("[DEBUG] Auth - Looking up user by credential ID...");
-
-                // Extract credential ID and find the user who owns it
-                var credentialId = credentialDoc.RootElement.GetProperty("id").GetString();
-                Console.WriteLine($"[DEBUG] Auth - Credential ID: {credentialId}");
-
-                // Convert base64url to bytes
-                var credentialIdBase64 = credentialId?.Replace('_', '/').Replace('-', '+');
-                switch (credentialIdBase64?.Length % 4)
+                var storedCredential = await credentialStore.GetByCredentialIdAsync(assertion.RawId);
+                if (storedCredential == null)
                 {
-                    case 2: credentialIdBase64 += "=="; break;
-                    case 3: credentialIdBase64 += "="; break;
-                }
-                var credentialIdBytes = Convert.FromBase64String(credentialIdBase64!);
-
-                // Find the user who owns this credential
-                var passkey = await dbContext.UserPasskeys
-                    .Where(p => p.CredentialId == credentialIdBytes)
-                    .FirstOrDefaultAsync();
-
-                if (passkey == null)
-                {
-                    Console.WriteLine("[ERROR] Auth - No passkey found with this credential ID");
+                    Console.WriteLine("[ERROR] Auth - Credential not found");
                     return Results.BadRequest(new { error = "Credential not found" });
                 }
 
-                Console.WriteLine($"[DEBUG] Auth - Found passkey for user: {passkey.UserId}");
-                var user = await userManager.FindByIdAsync(passkey.UserId);
+                var user = await userManager.FindByIdAsync(storedCredential.UserId);
                 if (user == null)
                 {
                     Console.WriteLine("[ERROR] Auth - User not found");
                     return Results.BadRequest(new { error = "User not found" });
                 }
 
-                // Verify the credential belongs to this user
-                var userPasskeys = await userManager.GetPasskeysAsync(user);
-                Console.WriteLine($"[DEBUG] Auth - User has {userPasskeys.Count} passkey(s)");
+                Console.WriteLine($"[DEBUG] Auth - Found credential for user: {user.UserName}");
+                Console.WriteLine($"[DEBUG] Auth - Current counter: {storedCredential.SignatureCounter}");
 
-                var matchingPasskey = userPasskeys.FirstOrDefault(pk =>
-                    pk.CredentialId.SequenceEqual(credentialIdBytes));
-
-                if (matchingPasskey == null)
+                var options = new AssertionOptions
                 {
-                    Console.WriteLine("[ERROR] Auth - Credential ID not found in user's passkeys");
-                    return Results.BadRequest(new { error = "Credential does not belong to user" });
+                    Challenge = challengeData.Challenge,
+                    RpId = "idp.dev.internal",
+                    AllowCredentials = new[] {
+                        new PublicKeyCredentialDescriptor(storedCredential.CredentialId)
+                    },
+                    UserVerification = UserVerificationRequirement.Required
+                };
+
+                Console.WriteLine("[DEBUG] Auth - ✅ Performing FULL FIDO2 assertion verification...");
+                Console.WriteLine($"[DEBUG] Auth - Expected userId: {storedCredential.UserId}");
+                Console.WriteLine($"[DEBUG] Auth - UserHandle from assertion (raw bytes): {(assertion.Response.UserHandle?.Length > 0 ? Convert.ToBase64String(assertion.Response.UserHandle) : "empty")}");
+                
+                // Decode the userHandle to see what it contains
+                if (assertion.Response.UserHandle?.Length > 0)
+                {
+                    try
+                    {
+                        var userHandleString = Encoding.UTF8.GetString(assertion.Response.UserHandle);
+                        Console.WriteLine($"[DEBUG] Auth - UserHandle decoded as UTF-8: {userHandleString}");
+                    }
+                    catch
+                    {
+                        Console.WriteLine("[DEBUG] Auth - UserHandle is not valid UTF-8");
+                    }
+                }
+                
+                var result = await fido2.MakeAssertionAsync(
+                    assertion,
+                    options,
+                    storedCredential.PublicKey,
+                    new List<byte[]>(),
+                    storedCredential.SignatureCounter,
+                    async (args, cancellationToken) =>
+                    {
+                        // The userHandle should match the userId that owns this credential
+                        // If userHandle is empty, we still allow it since we already verified the credential belongs to the user
+                        if (args.UserHandle == null || args.UserHandle.Length == 0)
+                        {
+                            Console.WriteLine("[DEBUG] Auth - UserHandle is empty, allowing based on credential ownership");
+                            return true;
+                        }
+                        
+                        // Try to decode the userHandle as UTF-8 string and compare
+                        try
+                        {
+                            var userHandleString = Encoding.UTF8.GetString(args.UserHandle);
+                            Console.WriteLine($"[DEBUG] Auth - Comparing userHandle '{userHandleString}' with userId '{storedCredential.UserId}'");
+                            
+                            // Check if it matches the userId directly
+                            if (userHandleString == storedCredential.UserId)
+                            {
+                                Console.WriteLine("[DEBUG] Auth - UserHandle matches userId (string comparison)");
+                                return true;
+                            }
+                            
+                            // The iOS app appears to Base64-encode the userId, so try decoding it
+                            try
+                            {
+                                var decodedBytes = Convert.FromBase64String(userHandleString);
+                                var decodedUserId = Encoding.UTF8.GetString(decodedBytes);
+                                Console.WriteLine($"[DEBUG] Auth - UserHandle after Base64 decode: '{decodedUserId}'");
+                                
+                                if (decodedUserId == storedCredential.UserId)
+                                {
+                                    Console.WriteLine("[DEBUG] Auth - UserHandle matches userId after Base64 decode!");
+                                    return true;
+                                }
+                            }
+                            catch
+                            {
+                                Console.WriteLine("[DEBUG] Auth - UserHandle is not Base64-encoded");
+                            }
+                            
+                            // Also check byte-level comparison
+                            var expectedUserIdBytes = Encoding.UTF8.GetBytes(storedCredential.UserId);
+                            var matches = args.UserHandle.SequenceEqual(expectedUserIdBytes);
+                            Console.WriteLine($"[DEBUG] Auth - UserHandle matches userId (byte comparison): {matches}");
+                            return matches;
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[DEBUG] Auth - Error decoding userHandle: {ex.Message}");
+                            // If we can't decode it, allow based on credential ownership
+                            return true;
+                        }
+                    },
+                    cancellationToken: CancellationToken.None
+                );
+
+                if (result.Status != "ok")
+                {
+                    Console.WriteLine($"[ERROR] Auth - ❌ Signature verification failed: {result.ErrorMessage}");
+                    return Results.BadRequest(new
+                    {
+                        error = "Signature verification failed",
+                        detail = result.ErrorMessage
+                    });
                 }
 
-                Console.WriteLine($"[DEBUG] Auth - Verified credential belongs to user");
-                Console.WriteLine($"[DEBUG] Auth - Credential ID (hex): {Convert.ToHexString(matchingPasskey.CredentialId)}");
+                Console.WriteLine($"[DEBUG] Auth - ✅ Signature verified successfully");
+                Console.WriteLine($"[DEBUG] Auth - New counter: {result.SignCount}");
 
-                // TODO: In production, you should perform full WebAuthn assertion validation here
-                // For now, we trust that:
-                // 1. The credential exists in the database
-                // 2. The challenge matches
-                // 3. The origin is correct (validated by IdentityPasskeyOptions)
-                // 4. The user owns this credential
+                // Counter validation for replay protection
+                // Only enforce counter increment if the stored counter is greater than 0
+                // First authentication (counter 0 -> 0 or 0 -> 1) is allowed
+                if (storedCredential.SignatureCounter > 0 && result.SignCount <= storedCredential.SignatureCounter)
+                {
+                    Console.WriteLine($"[SECURITY] Auth - ⚠️ Counter rollback detected!");
+                    Console.WriteLine($"[SECURITY] Auth - Stored counter: {storedCredential.SignatureCounter}");
+                    Console.WriteLine($"[SECURITY] Auth - Received counter: {result.SignCount}");
+                    Console.WriteLine($"[SECURITY] Auth - User: {user.Id}, Credential: {Convert.ToBase64String(storedCredential.CredentialId)}");
+                    
+                    return Results.BadRequest(new { error = "Authentication failed - possible replay attack" });
+                }
+                
+                Console.WriteLine($"[DEBUG] Auth - Counter validation passed (stored: {storedCredential.SignatureCounter}, new: {result.SignCount})");
 
-                // Sign in the user
+                storedCredential.SignatureCounter = result.SignCount;
+                storedCredential.LastUsed = DateTime.UtcNow;
+                await credentialStore.UpdateAsync(storedCredential);
+
+                Console.WriteLine("[DEBUG] Auth - Counter updated successfully");
+
                 Console.WriteLine("[DEBUG] Auth - Signing in user...");
+                
+                // Create ClaimsPrincipal with passkey authentication method
+                var principal = await signInManager.CreateUserPrincipalAsync(user);
+                
+                // Add required IdentityServer claims
+                var identity = principal.Identity as ClaimsIdentity;
+                if (identity != null)
+                {
+                    // Remove any existing amr claims and add passkey
+                    var amrClaims = identity.FindAll("amr").ToList();
+                    foreach (var claim in amrClaims)
+                    {
+                        identity.RemoveClaim(claim);
+                    }
+                    identity.AddClaim(new Claim("amr", "hwk")); // Hardware key authentication
+                    
+                    // Add auth_time claim (required by IdentityServer)
+                    var authTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+                    identity.AddClaim(new Claim("auth_time", authTime));
+                    
+                    // Add idp claim (identity provider)
+                    identity.AddClaim(new Claim("idp", "local"));
+                }
+                
                 await signInManager.SignInAsync(user, isPersistent: false);
                 Console.WriteLine("[DEBUG] Auth - User signed in successfully");
 
-                // Clear the passkey challenge from session
-                context.Session.Remove("passkey_challenge");
-
-                // Get code challenge from request
                 var codeChallenge = request.CodeChallenge;
                 var codeChallengeMethod = request.CodeChallengeMethod ?? "S256";
 
@@ -318,16 +573,10 @@ public static class MobilePasskeyEndpoints
                     return Results.BadRequest(new { error = "code_challenge is required for PKCE" });
                 }
 
-                Console.WriteLine($"[DEBUG] Auth - Code challenge received: {codeChallenge}");
-                Console.WriteLine($"[DEBUG] Auth - Code challenge method: {codeChallengeMethod}");
-
-                // Create authorization code with PKCE
-                // IdentityServer stores SHA256(codeChallenge), not the raw challenge
-                // This matches what IdentityServer does in its standard authorization flow
                 var code = new AuthorizationCode
                 {
                     ClientId = "mobile-client",
-                    Subject = context.User,
+                    Subject = principal,
                     CreationTime = DateTime.UtcNow,
                     Lifetime = 300,
                     RedirectUri = "com.idp.mobile://callback",
@@ -338,8 +587,7 @@ public static class MobilePasskeyEndpoints
                 };
 
                 var codeValue = await codeStore.StoreAuthorizationCodeAsync(code);
-                Console.WriteLine($"[DEBUG] Auth - Generated code: {codeValue}");
-                Console.WriteLine($"[DEBUG] Auth - Stored hashed code challenge (matches IdentityServer's standard flow)");
+                Console.WriteLine($"[DEBUG] Auth - Generated authorization code");
 
                 return Results.Ok(new
                 {
@@ -349,14 +597,8 @@ public static class MobilePasskeyEndpoints
             }
             catch (Exception ex)
             {
-                // Log the full exception for debugging
-                Console.WriteLine($"[ERROR] Auth - Passkey authentication failed: {ex.Message}");
+                Console.WriteLine($"[ERROR] Auth - Authentication failed: {ex.Message}");
                 Console.WriteLine($"[ERROR] Auth - Stack trace: {ex.StackTrace}");
-                if (ex.InnerException != null)
-                {
-                    Console.WriteLine($"[ERROR] Auth - Inner exception: {ex.InnerException.Message}");
-                }
-
                 return Results.Problem(
                     detail: ex.Message,
                     statusCode: 500,
@@ -375,12 +617,14 @@ public static class MobilePasskeyEndpoints
     );
 
     public record CompleteRegistrationRequest(
+        string ChallengeId,
         string CredentialJson
     );
 
     public record BeginAuthenticationRequest(string? Username);
 
     public record CompleteAuthenticationRequest(
+        string? ChallengeId,
         string CredentialJson,
         string? State,
         string? CodeChallenge,

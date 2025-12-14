@@ -18,6 +18,32 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         {
             options.RequireHttpsMetadata = true;
         }
+        
+        // Add detailed logging for authentication failures
+        options.Events = new JwtBearerEvents
+        {
+            OnAuthenticationFailed = context =>
+            {
+                Console.WriteLine($"❌ [Auth] Authentication failed: {context.Exception.Message}");
+                Console.WriteLine($"❌ [Auth] Exception type: {context.Exception.GetType().Name}");
+                if (context.Exception.InnerException != null)
+                {
+                    Console.WriteLine($"❌ [Auth] Inner exception: {context.Exception.InnerException.Message}");
+                }
+                return Task.CompletedTask;
+            },
+            OnTokenValidated = context =>
+            {
+                Console.WriteLine($"✅ [Auth] Token validated successfully");
+                Console.WriteLine($"✅ [Auth] User: {context.Principal?.Identity?.Name}");
+                return Task.CompletedTask;
+            },
+            OnChallenge = context =>
+            {
+                Console.WriteLine($"⚠️ [Auth] Challenge issued: {context.Error}, {context.ErrorDescription}");
+                return Task.CompletedTask;
+            }
+        };
     });
 
 builder.Services.AddAuthorization();

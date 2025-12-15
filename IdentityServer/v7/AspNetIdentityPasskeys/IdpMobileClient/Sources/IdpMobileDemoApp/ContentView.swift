@@ -271,6 +271,13 @@ class AuthViewModel: NSObject, ObservableObject {
     
     override init() {
         super.init()
+        
+        // Load persisted credential ID on init
+        if let credentialId = try? secureStorage.getCurrentCredentialId() {
+            currentCredentialId = credentialId
+            print("✅ [Init] Loaded persisted credential ID: \(credentialId.base64EncodedString().prefix(20))...")
+        }
+        
         self.apiClient = ApiClient(oauthClient: oauthClient)
         checkAuthenticationStatus()
     }
@@ -418,6 +425,7 @@ class AuthViewModel: NSObject, ObservableObject {
         errorMessage = nil
         hasDPoPBinding = false
         currentCredentialId = nil
+        try? secureStorage.deleteCurrentCredentialId()
     }
     
     private func handleRegistrationSuccess(credential: ASAuthorizationPlatformPublicKeyCredentialRegistration) async {
@@ -432,6 +440,7 @@ class AuthViewModel: NSObject, ObservableObject {
             
             // Store credential ID for later use
             currentCredentialId = credential.credentialID
+            try? secureStorage.storeCurrentCredentialId(credential.credentialID)
             
             // Check for PRF output (iOS 17+)
             if #available(iOS 17.0, *) {
@@ -477,30 +486,40 @@ class AuthViewModel: NSObject, ObservableObject {
             
             // Store credential ID for DPoP operations
             currentCredentialId = credential.credentialID
+            try? secureStorage.storeCurrentCredentialId(credential.credentialID)
             print("✅ [Passkey] Credential ID: \(credential.credentialID.base64EncodedString().prefix(20))...")
             
             // Extract PRF output (iOS 18+) or fallback deterministically for demo
             var prfOutput: Data? = nil
             if #available(iOS 18.0, *) {
+                print("[PRF] 🔍 Checking for PRF extension output in credential...")
                 var prfOutputData: Data? = nil
+                
+                // Access PRF output directly from credential.prf property
+                print("[PRF] 📋 credential.prf value: \(String(describing: credential.prf))")
+                
                 if let prfOutputContainer = credential.prf {
-                    // Prefer the first PRF output (derived from the first input). The second is optional.
-                    let primaryKey: SymmetricKey = prfOutputContainer.first
-                    prfOutputData = primaryKey.withUnsafeBytes { Data($0) }
-                    print("✅ [DPoP] Extracted PRF 'first' output (\(prfOutputData?.count ?? 0) bytes)")
+                    print("[PRF] ✅ PRF extension output found!")
+                    print("[PRF] 📋 PRF output container type: \(type(of: prfOutputContainer))")
+                      print("[PRF] 📋 PRF output container value: \(prfOutputContainer)")
                     
-                    // If you also want to consider the optional second output, uncomment below:
-                    // if let secondaryKeyMirror = try? Optional< SymmetricKey >.some(prfOutputContainer.second) {
-                    //     let secondaryData = secondaryKeyMirror.withUnsafeBytes { Data($0) }
-                    //     print("ℹ️ [DPoP] Extracted PRF 'second' output (\(secondaryData.count) bytes)")
-                    // }
+                    // Extract the first PRF output (derived from saltInput1)
+                    let primaryKey: SymmetricKey = prfOutputContainer.first
+                    print("[PRF] 📋 PRF first key type: \(type(of: primaryKey))")
+                    prfOutputData = primaryKey.withUnsafeBytes { Data($0) }
+                    
+                    print("[PRF] 🔑 Extracted PRF 'first' output")
+                    print("[PRF] 📏 PRF output length: \(prfOutputData?.count ?? 0) bytes")
+                    print("[PRF] 🔢 PRF output (Base64): \(prfOutputData?.base64EncodedString().prefix(20) ?? "nil")...")
+                    print("[PRF] 💡 This PRF output will be used to derive DPoP keys")
                     
                     if let prfOutputData {
                         try? secureStorage.storePrfOutput(prfOutputData, forCredentialId: credential.credentialID)
-                        print("✅ [DPoP] Stored PRF output")
+                        print("[PRF] 💾 Stored PRF output in secure storage")
                     }
                 } else {
-                    print("ℹ️ [DPoP] No PRF output returned by authenticator; using fallback")
+                    print("[PRF] ⚠️ No PRF output in credential.prf")
+                    print("[PRF] ℹ️ This may indicate PRF was not enabled during registration")
                 }
                 
                 if prfOutputData == nil {

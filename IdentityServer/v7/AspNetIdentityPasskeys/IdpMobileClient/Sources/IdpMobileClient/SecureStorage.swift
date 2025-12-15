@@ -155,6 +155,65 @@ public final class SecureStorage: @unchecked Sendable {
             throw SecureStorageError.deleteFailed(status)
         }
     }
+    
+    // MARK: - Current Credential ID Storage
+    
+    /// Store the current credential ID for DPoP operations
+    public func storeCurrentCredentialId(_ credentialId: Data) throws {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: "current-credential-id",
+            kSecValueData as String: credentialId
+        ]
+        
+        // Delete existing first
+        SecItemDelete(query as CFDictionary)
+        
+        let status = SecItemAdd(query as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            throw SecureStorageError.storeFailed(status)
+        }
+        
+        print("✅ [SecureStorage] Stored current credential ID")
+    }
+    
+    /// Retrieve the current credential ID
+    public func getCurrentCredentialId() throws -> Data? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: "current-credential-id",
+            kSecReturnData as String: true
+        ]
+        
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        
+        if status == errSecItemNotFound {
+            return nil
+        }
+        
+        guard status == errSecSuccess else {
+            throw SecureStorageError.retrieveFailed(status)
+        }
+        
+        return result as? Data
+    }
+    
+    /// Delete the current credential ID
+    public func deleteCurrentCredentialId() throws {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: "current-credential-id"
+        ]
+        
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw SecureStorageError.deleteFailed(status)
+        }
+    }
 }
 
 // MARK: - Errors

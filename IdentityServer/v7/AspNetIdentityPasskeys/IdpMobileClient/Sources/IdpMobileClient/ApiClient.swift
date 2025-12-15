@@ -96,7 +96,20 @@ public final class ApiClient: @unchecked Sendable {
     /// Convenience method to call a test endpoint
     public func callTestEndpoint() async throws -> String {
         let data = try await get(path: "/claims")
-        return String(data: data, encoding: .utf8) ?? ""
+        let rawString = String(data: data, encoding: .utf8) ?? ""
+        
+        // Try to pretty print JSON if the response is JSON
+        if let jsonData = rawString.data(using: .utf8),
+           let jsonObject = try? JSONSerialization.jsonObject(with: jsonData),
+           let prettyData = try? JSONSerialization.data(withJSONObject: jsonObject, options: [.prettyPrinted, .sortedKeys]),
+           let prettyString = String(data: prettyData, encoding: .utf8) {
+            print("📄 [ApiClient] Pretty printed JSON response:")
+            print(prettyString)
+            return prettyString
+        }
+        
+        // If not JSON, return as-is
+        return rawString
     }
 }
 

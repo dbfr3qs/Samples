@@ -89,18 +89,31 @@ public class DPoPTokenRequestValidator : ICustomTokenRequestValidator
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase 
         });
 
-        var binding = new Models.DeviceBinding
+        // Check if binding already exists for this thumbprint
+        var existingBinding = await _deviceBindingStore.GetByThumbprintAsync(validationResult.Thumbprint!);
+        
+        if (existingBinding != null)
         {
-            UserId = userId,
-            CredentialId = Array.Empty<byte>(),
-            DPoPPublicKeyJwk = jwkJson,
-            PublicKeyThumbprint = validationResult.Thumbprint!,
-            CreatedAt = DateTime.UtcNow,
-            LastUsedAt = DateTime.UtcNow,
-            RefreshCount = 0
-        };
+            _logger.LogInformation("Device binding already exists for thumbprint {Thumbprint}, updating last used time", validationResult.Thumbprint);
+            existingBinding.LastUsedAt = DateTime.UtcNow;
+            await _deviceBindingStore.UpdateAsync(existingBinding);
+        }
+        else
+        {
+            _logger.LogInformation("Creating new device binding for user {UserId} with thumbprint {Thumbprint}", userId, validationResult.Thumbprint);
+            var binding = new Models.DeviceBinding
+            {
+                UserId = userId,
+                CredentialId = Array.Empty<byte>(),
+                DPoPPublicKeyJwk = jwkJson,
+                PublicKeyThumbprint = validationResult.Thumbprint!,
+                CreatedAt = DateTime.UtcNow,
+                LastUsedAt = DateTime.UtcNow,
+                RefreshCount = 0
+            };
 
-        await _deviceBindingStore.CreateAsync(binding);
+            await _deviceBindingStore.CreateAsync(binding);
+        }
 
         context.Result.ValidatedRequest.ClientClaims.Add(new Claim("dpop_jkt", validationResult.Thumbprint!));
         context.Result.CustomResponse = new Dictionary<string, object>
@@ -108,7 +121,7 @@ public class DPoPTokenRequestValidator : ICustomTokenRequestValidator
             { "token_type", "DPoP" }
         };
 
-        _logger.LogInformation("Device binding created for user {UserId} with thumbprint {Thumbprint}", userId, validationResult.Thumbprint);
+        _logger.LogInformation("Device binding processed for user {UserId} with thumbprint {Thumbprint}", userId, validationResult.Thumbprint);
     }
 
     private async Task HandleRefreshTokenGrantAsync(CustomTokenRequestValidationContext context, DPoPValidationResult validationResult)

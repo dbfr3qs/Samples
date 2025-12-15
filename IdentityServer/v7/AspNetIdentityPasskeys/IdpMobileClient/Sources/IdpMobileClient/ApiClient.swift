@@ -5,13 +5,22 @@ import Foundation
 public final class ApiClient: @unchecked Sendable {
     private let apiBaseURL: String
     private let oauthClient: OAuthClient
+    private let dpopKeyManager: DPoPKeyManager
+    private let dpopProofGenerator: DPoPProofGenerator
+    private let secureStorage: SecureStorage
     
     public init(
         apiBaseURL: String = "https://api.dev.internal:5002",
-        oauthClient: OAuthClient
+        oauthClient: OAuthClient,
+        dpopKeyManager: DPoPKeyManager = DPoPKeyManager(),
+        dpopProofGenerator: DPoPProofGenerator = DPoPProofGenerator(),
+        secureStorage: SecureStorage = SecureStorage()
     ) {
         self.apiBaseURL = apiBaseURL
         self.oauthClient = oauthClient
+        self.dpopKeyManager = dpopKeyManager
+        self.dpopProofGenerator = dpopProofGenerator
+        self.secureStorage = secureStorage
     }
     
     /// Make an authenticated GET request to the API
@@ -30,6 +39,33 @@ public final class ApiClient: @unchecked Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        
+        // Add DPoP proof if we have a cached credential ID
+        if let credentialId = try? secureStorage.getCurrentCredentialId() {
+            do {
+                print("🔐 [ApiClient] Generating DPoP proof for API request...")
+                let (privateKey, jwk, thumbprint) = try dpopKeyManager.getOrDeriveKey(
+                    prfOutput: nil,
+                    credentialId: credentialId
+                )
+                
+                let dpopProof = try dpopProofGenerator.generateProof(
+                    privateKey: privateKey,
+                    jwk: jwk,
+                    httpMethod: "GET",
+                    httpUri: url.absoluteString,
+                    accessToken: accessToken
+                )
+                
+                request.setValue(dpopProof, forHTTPHeaderField: "DPoP")
+                print("✅ [ApiClient] Added DPoP proof to request (thumbprint: \(thumbprint.prefix(20))...)")
+            } catch {
+                print("⚠️ [ApiClient] Failed to generate DPoP proof: \(error)")
+                print("⚠️ [ApiClient] Continuing without DPoP (may fail if API requires it)")
+            }
+        } else {
+            print("ℹ️ [ApiClient] No credential ID available, skipping DPoP proof")
+        }
         
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -74,6 +110,29 @@ public final class ApiClient: @unchecked Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        
+        // Add DPoP proof if we have a cached credential ID
+        if let credentialId = try? secureStorage.getCurrentCredentialId() {
+            do {
+                let (privateKey, jwk, thumbprint) = try dpopKeyManager.getOrDeriveKey(
+                    prfOutput: nil,
+                    credentialId: credentialId
+                )
+                
+                let dpopProof = try dpopProofGenerator.generateProof(
+                    privateKey: privateKey,
+                    jwk: jwk,
+                    httpMethod: "POST",
+                    httpUri: url.absoluteString,
+                    accessToken: accessToken
+                )
+                
+                request.setValue(dpopProof, forHTTPHeaderField: "DPoP")
+                print("✅ [ApiClient] Added DPoP proof to POST request (thumbprint: \(thumbprint.prefix(20))...)")
+            } catch {
+                print("⚠️ [ApiClient] Failed to generate DPoP proof: \(error)")
+            }
+        }
         
         if let body = body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

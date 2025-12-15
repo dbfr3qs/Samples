@@ -1,7 +1,14 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Api.Services;
+using Api.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Add DPoP services
+builder.Services.AddDistributedMemoryCache();
+builder.Services.AddScoped<IReplayCache, ReplayCache>();
+builder.Services.AddScoped<DPoPProofValidator>();
 
 // Add services to the container.
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -58,12 +65,16 @@ app.Use(async (context, next) =>
 {
     Console.WriteLine($"🌐 [{DateTime.Now:HH:mm:ss}] {context.Request.Method} {context.Request.Path}");
     Console.WriteLine($"🔑 Authorization header: {context.Request.Headers["Authorization"].FirstOrDefault() ?? "NONE"}");
+    Console.WriteLine($"🔐 DPoP header: {context.Request.Headers["DPoP"].FirstOrDefault() ?? "NONE"}");
     await next();
     Console.WriteLine($"✅ [{DateTime.Now:HH:mm:ss}] Response: {context.Response.StatusCode}");
 });
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// Add DPoP validation middleware (after authentication, before endpoints)
+app.UseMiddleware<DPoPValidationMiddleware>();
 
 // Test endpoint for mobile app
 app.MapGet("/test", [Authorize] (HttpContext context) =>

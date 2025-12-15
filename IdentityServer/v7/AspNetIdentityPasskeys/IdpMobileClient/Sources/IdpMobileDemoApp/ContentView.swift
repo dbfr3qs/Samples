@@ -334,9 +334,18 @@ class AuthViewModel: NSObject, ObservableObject {
             print("✅ [Passkey] Received challengeId: \(options.challengeId)")
             currentChallengeId = options.challengeId
             
-            // Step 3: Create and present passkey authentication request
-            print("🔐 [Passkey] Creating authentication request...")
-            let controller = passkeyService.createAuthenticationRequest(options: options)
+            // Step 3: Generate PRF salt (deterministic based on rpId)
+            // This salt will be used by the authenticator to generate deterministic PRF output
+            print("🔐 [Passkey] Generating PRF salt...")
+            let rpId = options.rpId ?? "idp.dev.internal"
+            let prfSaltData = SHA256.hash(data: Data(rpId.utf8))
+            let prfSalt = Data(prfSaltData)
+            print("✅ [Passkey] Generated PRF salt: \(prfSalt.base64EncodedString().prefix(20))...")
+            print("✅ [Passkey] PRF salt length: \(prfSalt.count) bytes")
+            
+            // Step 4: Create and present passkey authentication request with PRF
+            print("🔐 [Passkey] Creating authentication request with PRF...")
+            let controller = passkeyService.createAuthenticationRequest(options: options, prfSalt: prfSalt)
             controller.delegate = self
             controller.presentationContextProvider = self
             

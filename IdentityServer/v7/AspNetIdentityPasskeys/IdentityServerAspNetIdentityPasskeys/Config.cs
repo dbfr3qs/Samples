@@ -91,6 +91,7 @@ public static class Config
                 RefreshTokenUsage = TokenUsage.ReUse,
                 RefreshTokenExpiration = TokenExpiration.Sliding,
                 SlidingRefreshTokenLifetime = 1296000, // 15 days
+                RequireDPoP = true,
 
                 AllowedScopes = { "openid", "profile", "api" }
             },

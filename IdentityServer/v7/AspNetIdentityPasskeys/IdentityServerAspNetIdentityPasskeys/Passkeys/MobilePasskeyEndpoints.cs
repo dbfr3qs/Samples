@@ -108,8 +108,13 @@ public static class MobilePasskeyEndpoints
 
                 // Generate PRF salt for this user (deterministic based on userId)
                 var prfSalt = SHA256.HashData(Encoding.UTF8.GetBytes(userId));
-                Console.WriteLine($"[DEBUG] Generated PRF salt for user (length: {prfSalt.Length})");
+                Console.WriteLine($"[PRF] 🔑 Generated PRF salt for user '{userName}'");
+                Console.WriteLine($"[PRF] 📏 PRF salt length: {prfSalt.Length} bytes");
+                Console.WriteLine($"[PRF] 🔢 PRF salt (Base64): {Convert.ToBase64String(prfSalt)}");
 
+                Console.WriteLine($"[PRF] ✅ Sending registration options with PRF extension enabled");
+                Console.WriteLine($"[PRF] 📤 Client should set request.prf = .checkForSupport on iOS 18+");
+                
                 return Results.Ok(new
                 {
                     challenge = Base64Url.Encode(options.Challenge),
@@ -127,13 +132,9 @@ public static class MobilePasskeyEndpoints
                     challengeId = challengeId,
                     extensions = new
                     {
-                        prf = new
-                        {
-                            eval = new
-                            {
-                                first = Base64UrlEncoder.Encode(prfSalt)
-                            }
-                        }
+                        // For registration, signal PRF support availability
+                        // The iOS client will use request.prf = .checkForSupport to enable PRF
+                        prf = new { }
                     }
                 });
             }
@@ -182,6 +183,31 @@ public static class MobilePasskeyEndpoints
                 // First parse to get the credential structure
                 var credentialDoc = JsonDocument.Parse(request.CredentialJson);
                 var credentialRoot = credentialDoc.RootElement;
+                
+                // Check for PRF extension results
+                Console.WriteLine($"[PRF] 🔍 Checking for PRF extension results in credential response...");
+                if (credentialRoot.TryGetProperty("clientExtensionResults", out var extensionResults))
+                {
+                    Console.WriteLine($"[PRF] 📦 clientExtensionResults found");
+                    if (extensionResults.TryGetProperty("prf", out var prfResults))
+                    {
+                        Console.WriteLine($"[PRF] ✅ PRF extension results present!");
+                        Console.WriteLine($"[PRF] 📄 PRF results: {prfResults.GetRawText()}");
+                        
+                        if (prfResults.TryGetProperty("enabled", out var enabled))
+                        {
+                            Console.WriteLine($"[PRF] 🎯 PRF enabled: {enabled.GetBoolean()}");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[PRF] ⚠️ No PRF results in clientExtensionResults");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"[PRF] ⚠️ No clientExtensionResults in credential response");
+                }
                 
                 // Extract the raw credential data
                 var id = credentialRoot.GetProperty("id").GetString();
@@ -270,6 +296,8 @@ public static class MobilePasskeyEndpoints
 
                 // Generate and store PRF salt
                 var prfSalt = SHA256.HashData(Encoding.UTF8.GetBytes(challengeData.UserId!));
+                Console.WriteLine($"[PRF] 💾 Storing PRF salt with credential");
+                Console.WriteLine($"[PRF] 🔢 Stored PRF salt (Base64): {Convert.ToBase64String(prfSalt)}");
 
                 await credentialStore.AddAsync(new StoredCredential
                 {
@@ -333,7 +361,10 @@ public static class MobilePasskeyEndpoints
 
                 Console.WriteLine($"[DEBUG] Generated challenge ID: {challengeId}");
 
-                // Note: PRF salt will be retrieved from stored credential during authentication complete
+                Console.WriteLine($"[PRF] 🔐 Authentication begin - PRF extension will be used");
+                Console.WriteLine($"[PRF] ℹ️ Client should provide PRF salt input during authentication");
+                Console.WriteLine($"[PRF] 💡 Salt will be retrieved from stored credential on server side");
+                
                 return Results.Ok(new
                 {
                     challenge = Base64Url.Encode(options.Challenge),
@@ -343,6 +374,7 @@ public static class MobilePasskeyEndpoints
                     challengeId = challengeId,
                     extensions = new
                     {
+                        // Signal PRF support for authentication
                         prf = new { }
                     }
                 });
@@ -386,6 +418,39 @@ public static class MobilePasskeyEndpoints
                 
                 var assertionDoc = JsonDocument.Parse(request.CredentialJson);
                 var assertionRoot = assertionDoc.RootElement;
+                
+                // Check for PRF extension results
+                Console.WriteLine($"[PRF] 🔍 Checking for PRF extension results in authentication response...");
+                if (assertionRoot.TryGetProperty("clientExtensionResults", out var authExtensionResults))
+                {
+                    Console.WriteLine($"[PRF] 📦 clientExtensionResults found in authentication");
+                    if (authExtensionResults.TryGetProperty("prf", out var authPrfResults))
+                    {
+                        Console.WriteLine($"[PRF] ✅ PRF extension results present in authentication!");
+                        Console.WriteLine($"[PRF] 📄 PRF results: {authPrfResults.GetRawText()}");
+                        
+                        if (authPrfResults.TryGetProperty("results", out var results))
+                        {
+                            Console.WriteLine($"[PRF] 🎯 PRF results object found");
+                            if (results.TryGetProperty("first", out var firstOutput))
+                            {
+                                var prfOutputB64 = firstOutput.GetString();
+                                Console.WriteLine($"[PRF] 🔑 PRF output (first) received from authenticator!");
+                                Console.WriteLine($"[PRF] 📏 PRF output length: {prfOutputB64?.Length ?? 0} chars (base64)");
+                                Console.WriteLine($"[PRF] 🔢 PRF output (Base64): {prfOutputB64?.Substring(0, Math.Min(20, prfOutputB64?.Length ?? 0))}...");
+                                Console.WriteLine($"[PRF] 💡 This PRF output can be used to derive DPoP keys deterministically");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[PRF] ⚠️ No PRF results in clientExtensionResults during authentication");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"[PRF] ⚠️ No clientExtensionResults in authentication response");
+                }
                 
                 // Extract the raw assertion data
                 var id = assertionRoot.GetProperty("id").GetString();
@@ -435,6 +500,19 @@ public static class MobilePasskeyEndpoints
 
                 Console.WriteLine($"[DEBUG] Auth - Found credential for user: {user.UserName}");
                 Console.WriteLine($"[DEBUG] Auth - Current counter: {storedCredential.SignatureCounter}");
+                
+                // Log PRF salt information
+                if (storedCredential.PrfSalt != null && storedCredential.PrfSalt.Length > 0)
+                {
+                    Console.WriteLine($"[PRF] 🔑 PRF salt retrieved from stored credential");
+                    Console.WriteLine($"[PRF] 📏 PRF salt length: {storedCredential.PrfSalt.Length} bytes");
+                    Console.WriteLine($"[PRF] 🔢 PRF salt (Base64): {Convert.ToBase64String(storedCredential.PrfSalt)}");
+                    Console.WriteLine($"[PRF] ℹ️ Client should have used this salt to generate PRF output");
+                }
+                else
+                {
+                    Console.WriteLine($"[PRF] ⚠️ No PRF salt found for this credential");
+                }
 
                 var options = new AssertionOptions
                 {

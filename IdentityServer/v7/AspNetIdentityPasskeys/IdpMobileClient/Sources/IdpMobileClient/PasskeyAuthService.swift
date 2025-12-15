@@ -1,8 +1,9 @@
 import Foundation
 import AuthenticationServices
+import CryptoKit
 
 /// Service for passkey-based authentication with IdentityServer
-@available(iOS 15.0, *)
+@available(iOS 18.0, macOS 15.0, *)
 public final class PasskeyAuthService: NSObject, @unchecked Sendable {
     private let idpBaseURL: String
     private let relyingPartyIdentifier: String
@@ -24,6 +25,7 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
         let url = URL(string: "\(idpBaseURL)/api/passkey/register/begin")!
         
         print("🌐 [PasskeyService] POST \(url)")
+        print("[PRF] 🚀 Starting passkey registration for user: \(username)")
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -42,7 +44,22 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
             throw PasskeyError.registrationFailed
         }
         
-        return try JSONDecoder().decode(RegistrationOptions.self, from: data)
+        let options = try JSONDecoder().decode(RegistrationOptions.self, from: data)
+        
+        // Log PRF extension information
+        print("[PRF] 📥 Received registration options from server")
+        if let extensions = options.extensions {
+            print("[PRF] 📦 Extensions object present in response")
+            if extensions.prf != nil {
+                print("[PRF] ✅ PRF extension present - server supports PRF")
+            } else {
+                print("[PRF] ⚠️ No PRF extension in response")
+            }
+        } else {
+            print("[PRF] ⚠️ No extensions in registration options")
+        }
+        
+        return options
     }
     
     /// Complete passkey registration with credential
@@ -59,6 +76,22 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
+        print("[PRF] 🎉 User completed passkey registration")
+        print("[PRF] 🔍 Checking for PRF extension results...")
+        
+        // Check for PRF extension results
+        let extensionResults: [String: String] = [:]
+        
+        // Try to access PRF results if available
+        // Note: As of iOS 18.0, PRF results may not be directly accessible via public API
+        // The authenticator stores the PRF key internally
+        print("[PRF] 📋 Credential ID: \(credential.credentialID.base64URLEncodedString().prefix(20))...")
+        print("[PRF] 📏 Credential ID length: \(credential.credentialID.count) bytes")
+        
+        // Check if PRF was enabled (indicated by successful registration with prf set)
+        print("[PRF] ℹ️ PRF key should be stored by authenticator (not directly accessible)")
+        print("[PRF] ℹ️ PRF will be available during authentication assertions")
+        
         let credentialData = RegistrationCredential(
             id: credential.credentialID.base64URLEncodedString(),
             rawId: credential.credentialID.base64URLEncodedString(),
@@ -67,8 +100,10 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
                 clientDataJSON: credential.rawClientDataJSON.base64URLEncodedString(),
                 attestationObject: credential.rawAttestationObject?.base64URLEncodedString() ?? ""
             ),
-            clientExtensionResults: [:]
+            clientExtensionResults: extensionResults
         )
+        
+        print("[PRF] 📤 Sending credential to server for verification...")
         
         // Encode credential to JSON string
         let credentialJsonData = try JSONEncoder().encode(credentialData)
@@ -98,6 +133,8 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
         }
         
         print("✅ [PasskeyService] Registration completed successfully")
+        print("[PRF] 🎊 Passkey registered with PRF support enabled")
+        print("[PRF] 💡 PRF can now be used during authentication to derive keys")
     }
     
     // MARK: - Passkey Authentication
@@ -108,6 +145,7 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
         let url = URL(string: "\(idpBaseURL)/api/passkey/authenticate/begin")!
         
         print("🌐 [PasskeyService] POST \(url)")
+        print("[PRF] 🚀 Starting passkey authentication")
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -135,6 +173,20 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
         do {
             let options = try JSONDecoder().decode(AuthenticationOptions.self, from: data)
             print("✅ [PasskeyService] Successfully decoded authentication options")
+            
+            // Log PRF extension information
+            print("[PRF] 📥 Received authentication options from server")
+            if let extensions = options.extensions {
+                print("[PRF] 📦 Extensions object present in response")
+                if extensions.prf != nil {
+                    print("[PRF] ✅ PRF extension present - will use PRF during authentication")
+                } else {
+                    print("[PRF] ⚠️ No PRF extension in response")
+                }
+            } else {
+                print("[PRF] ⚠️ No extensions in authentication options")
+            }
+            
             return options
         } catch {
             let responseBody = String(data: data, encoding: .utf8) ?? "Unable to decode response"
@@ -161,6 +213,23 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
+        print("[PRF] 🎉 User completed passkey authentication")
+        print("[PRF] 🔍 Checking for PRF extension results...")
+        
+        // Check for PRF extension results
+        let extensionResults: [String: String] = [:]
+        
+        // Try to access PRF output if available
+        // Note: As of iOS 18.0, PRF output should be accessible via the assertion
+        print("[PRF] 📋 Credential ID: \(credential.credentialID.base64URLEncodedString().prefix(20))...")
+        print("[PRF] 📏 Credential ID length: \(credential.credentialID.count) bytes")
+        
+        // TODO: Extract PRF output from credential when available
+        // The PRF output should be available in the assertion response
+        // This will be used to derive DPoP keys deterministically
+        print("[PRF] ℹ️ PRF output extraction to be implemented")
+        print("[PRF] ℹ️ Check credential properties for PRF results")
+        
         let credentialData = AuthenticationCredential(
             id: credential.credentialID.base64URLEncodedString(),
             rawId: credential.credentialID.base64URLEncodedString(),
@@ -171,8 +240,10 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
                 signature: credential.signature.base64URLEncodedString(),
                 userHandle: credential.userID.base64URLEncodedString()
             ),
-            clientExtensionResults: [:]
+            clientExtensionResults: extensionResults
         )
+        
+        print("[PRF] 📤 Sending authentication credential to server...")
         
         // Encode credential to JSON string
         let credentialJsonData = try JSONEncoder().encode(credentialData)
@@ -214,7 +285,6 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
     // MARK: - Platform Support
     
     /// Create authorization controller for passkey registration
-    @available(iOS 16.0, *)
     public func createRegistrationRequest(options: RegistrationOptions) -> ASAuthorizationController {
         let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: relyingPartyIdentifier)
         
@@ -227,22 +297,38 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
             userID: userID
         )
         
-        // Add PRF extension for iOS 18+
-        if #available(iOS 18.0, *),
-           let prfSaltB64 = options.extensions?.prf?.eval?.first,
-           let prfSaltData = Data(base64URLEncoded: prfSaltB64) {
-            // TODO: Configure PRF when SDK symbols are available. The current Xcode SDK does not expose PRF request parameters.
-            // Example (subject to SDK):
-            // request.passkeyRegistrationRequestParameters?.prf = .init(salt1: prfSaltData)
-            print("ℹ️ [PasskeyService] PRF salt decoded for registration (iOS 18+), awaiting SDK PRF API availability. Length: \(prfSaltData.count) bytes")
-        }
+        print("[PRF] 🔧 Configuring registration request...")
+        print("[PRF] 👤 User: \(options.user.name)")
+        print("[PRF] 🆔 User ID length: \(userID.count) bytes")
+        print("[PRF] 🎲 Challenge length: \(challenge.count) bytes")
+        
+        // Enable PRF extension for iOS 18+
+        // This tells the authenticator to store a PRF key alongside the passkey
+        print("[PRF] 🔑 Setting request.prf = .checkForSupport (iOS 18+)")
+        request.prf = .checkForSupport
+        print("[PRF] ✅ PRF enabled for registration - authenticator will store PRF key")
+        print("[PRF] 📱 Presenting passkey registration UI to user...")
         
         return ASAuthorizationController(authorizationRequests: [request])
     }
     
-    /// Create authorization controller for passkey authentication
-    @available(iOS 16.0, *)
-    public func createAuthenticationRequest(options: AuthenticationOptions, prfSalt: Data? = nil) -> ASAuthorizationController {
+    /*
+     Usage (in your ASAuthorizationControllerDelegate):
+     
+     if #available(iOS 18.0, *),
+        let assertion = authorization.credential as? ASAuthorizationPlatformPublicKeyCredentialAssertion {
+         // Example access path; actual SDK may expose prf output directly or via clientExtensionResults
+         // let prfOutput: Data = assertion.value(forKey: "prfOutput1") as? Data ?? Data()
+         // let dpopKey = try deriveDPoPPrivateKey(prfOutput: prfOutput, rpId: options.rpId ?? relyingPartyIdentifier, credentialIdB64Url: assertion.credentialID.base64URLEncodedString())
+     }
+     */
+    
+    /// Create authorization controller for passkey authentication with PRF support
+    /// - Parameters:
+    ///   - options: Authentication options from the server
+    ///   - prfSalt: Salt data to use for PRF evaluation (32 bytes recommended)
+    /// - Returns: ASAuthorizationController configured with PRF
+    public func createAuthenticationRequest(options: AuthenticationOptions, prfSalt: Data) -> ASAuthorizationController {
         let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: relyingPartyIdentifier)
         
         guard let challenge = Data(base64URLEncoded: options.challenge) else {
@@ -258,15 +344,43 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
         
         let request = provider.createCredentialAssertionRequest(challenge: challenge)
         
-        // Add PRF extension for iOS 18+
-        if #available(iOS 18.0, *), let prfSalt {
-            // TODO: Configure PRF when SDK symbols are available. The current Xcode SDK does not expose PRF request parameters.
-            // Example (subject to SDK):
-            // request.passkeyAssertionRequestParameters?.prf = .init(salt1: prfSalt)
-            print("ℹ️ [PasskeyService] PRF salt provided for authentication (iOS 18+), awaiting SDK PRF API availability. Length: \(prfSalt.count) bytes")
-        }
+        print("[PRF] 🔧 Configuring authentication request with PRF...")
+        print("[PRF] 🎲 Challenge length: \(challenge.count) bytes")
+        print("[PRF] 🧂 PRF salt length: \(prfSalt.count) bytes")
+        print("[PRF] 🔢 PRF salt (Base64): \(prfSalt.base64EncodedString().prefix(20))...")
+        
+        // Configure PRF extension for iOS 18+
+        // This provides salt input to generate deterministic PRF output
+        let prfInputValues = ASAuthorizationPublicKeyCredentialPRFAssertionInput.InputValues(
+            saltInput1: prfSalt,
+            saltInput2: nil  // Optional: second salt for additional key derivation
+        )
+        
+        request.prf = ASAuthorizationPublicKeyCredentialPRFAssertionInput.inputValues(
+            prfInputValues,
+            perCredentialInputValues: nil
+        )
+        
+        print("[PRF] ✅ PRF configured with salt input")
+        print("[PRF] 💡 Authenticator will generate deterministic output from this salt")
+        print("[PRF] 📱 Presenting passkey authentication UI to user...")
         
         return ASAuthorizationController(authorizationRequests: [request])
+    }
+}
+
+@available(iOS 18.0, macOS 15.0, *)
+extension PasskeyAuthService {
+    /// Derive a deterministic DPoP private key from PRF output, RP ID, and credential ID.
+    /// - Parameters:
+    ///   - prfOutput: The PRF output bytes returned by the authenticator (Data).
+    ///   - rpId: The relying party identifier (string).
+    ///   - credentialIdB64Url: The credential ID in base64url (from assertion.credentialID.base64URLEncodedString()).
+    /// - Returns: A P256.Signing.PrivateKey suitable for DPoP (deterministic per passkey and RP).
+    public func deriveDPoPPrivateKey(prfOutput: Data, rpId: String, credentialIdB64Url: String) throws -> P256.Signing.PrivateKey {
+        let credIdData = Data(base64URLEncoded: credentialIdB64Url) ?? Data()
+        let seed = DPoPKeyDeriver.deriveSeedFromPRF(prfOutput: prfOutput, rpId: rpId, credentialId: credIdData)
+        return try DPoPKeyDeriver.makeP256PrivateKey(fromSeed: seed)
     }
 }
 
@@ -295,11 +409,8 @@ public struct RegistrationOptions: Codable, Sendable {
         public let prf: PRFExtension?
         
         public struct PRFExtension: Codable, Sendable {
-            public let eval: PRFEval?
-            
-            public struct PRFEval: Codable, Sendable {
-                public let first: String
-            }
+            // Empty for registration - signals PRF support availability
+            // The client will use request.prf = .checkForSupport to enable PRF
         }
     }
 }

@@ -2,7 +2,7 @@ import Foundation
 import WebKit
 
 /// WebView that automatically injects id_token_hint for seamless SSO
-@available(iOS 15.0, *)
+@available(iOS 18.0, *)
 public final class AuthenticatedWebView: WKWebView {
     private var idTokenHint: String?
     private let idpBaseURL: String
@@ -36,9 +36,10 @@ public final class AuthenticatedWebView: WKWebView {
 
 // MARK: - WKNavigationDelegate
 
-@available(iOS 15.0, *)
+@available(iOS 18.0, *)
 extension AuthenticatedWebView: WKNavigationDelegate {
-    public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+    @MainActor
+    public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
         
         guard let url = navigationAction.request.url else {
             decisionHandler(.allow)

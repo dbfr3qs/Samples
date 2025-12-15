@@ -1,6 +1,7 @@
 import Foundation
 
 /// Client for making authenticated API requests
+@available(iOS 15.0, macOS 12.0, *)
 public final class ApiClient: @unchecked Sendable {
     private let apiBaseURL: String
     private let oauthClient: OAuthClient

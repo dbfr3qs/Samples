@@ -214,7 +214,7 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
     // MARK: - Platform Support
     
     /// Create authorization controller for passkey registration
-    @available(iOS 15.0, *)
+    @available(iOS 16.0, *)
     public func createRegistrationRequest(options: RegistrationOptions) -> ASAuthorizationController {
         let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: relyingPartyIdentifier)
         
@@ -227,12 +227,22 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
             userID: userID
         )
         
+        // Add PRF extension for iOS 18+
+        if #available(iOS 18.0, *),
+           let prfSaltB64 = options.extensions?.prf?.eval?.first,
+           let prfSaltData = Data(base64URLEncoded: prfSaltB64) {
+            // TODO: Configure PRF when SDK symbols are available. The current Xcode SDK does not expose PRF request parameters.
+            // Example (subject to SDK):
+            // request.passkeyRegistrationRequestParameters?.prf = .init(salt1: prfSaltData)
+            print("ℹ️ [PasskeyService] PRF salt decoded for registration (iOS 18+), awaiting SDK PRF API availability. Length: \(prfSaltData.count) bytes")
+        }
+        
         return ASAuthorizationController(authorizationRequests: [request])
     }
     
     /// Create authorization controller for passkey authentication
-    @available(iOS 15.0, *)
-    public func createAuthenticationRequest(options: AuthenticationOptions) -> ASAuthorizationController {
+    @available(iOS 16.0, *)
+    public func createAuthenticationRequest(options: AuthenticationOptions, prfSalt: Data? = nil) -> ASAuthorizationController {
         let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: relyingPartyIdentifier)
         
         guard let challenge = Data(base64URLEncoded: options.challenge) else {
@@ -248,6 +258,14 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
         
         let request = provider.createCredentialAssertionRequest(challenge: challenge)
         
+        // Add PRF extension for iOS 18+
+        if #available(iOS 18.0, *), let prfSalt {
+            // TODO: Configure PRF when SDK symbols are available. The current Xcode SDK does not expose PRF request parameters.
+            // Example (subject to SDK):
+            // request.passkeyAssertionRequestParameters?.prf = .init(salt1: prfSalt)
+            print("ℹ️ [PasskeyService] PRF salt provided for authentication (iOS 18+), awaiting SDK PRF API availability. Length: \(prfSalt.count) bytes")
+        }
+        
         return ASAuthorizationController(authorizationRequests: [request])
     }
 }
@@ -260,6 +278,7 @@ public struct RegistrationOptions: Codable, Sendable {
     public let rp: RelyingParty
     public let user: User
     public let timeout: Int?
+    public let extensions: Extensions?
     
     public struct RelyingParty: Codable, Sendable {
         public let name: String
@@ -271,6 +290,18 @@ public struct RegistrationOptions: Codable, Sendable {
         public let name: String
         public let displayName: String
     }
+    
+    public struct Extensions: Codable, Sendable {
+        public let prf: PRFExtension?
+        
+        public struct PRFExtension: Codable, Sendable {
+            public let eval: PRFEval?
+            
+            public struct PRFEval: Codable, Sendable {
+                public let first: String
+            }
+        }
+    }
 }
 
 public struct AuthenticationOptions: Codable, Sendable {
@@ -278,6 +309,15 @@ public struct AuthenticationOptions: Codable, Sendable {
     public let challengeId: String
     public let timeout: Int?
     public let rpId: String?
+    public let extensions: Extensions?
+    
+    public struct Extensions: Codable, Sendable {
+        public let prf: PRFExtension?
+        
+        public struct PRFExtension: Codable, Sendable {
+            // Empty for authentication begin - PRF salt retrieved from stored credential
+        }
+    }
 }
 
 public struct RegistrationCredential: Codable, Sendable {
@@ -319,3 +359,4 @@ public enum PasskeyError: Error {
     case invalidChallenge
     case userCancelled
 }
+

@@ -11,6 +11,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
 {
     public DbSet<PasskeyChallenge> PasskeyChallenges { get; set; }
     public DbSet<PasskeyCredential> PasskeyCredentials { get; set; }
+    public DbSet<DeviceBinding> DeviceBindings { get; set; }
 
     public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
         : base(options)
@@ -33,6 +34,14 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.UserId);
             entity.HasIndex(e => e.CredentialId).IsUnique();
+        });
+
+        builder.Entity<DeviceBinding>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.PublicKeyThumbprint).IsUnique();
+            entity.HasIndex(e => e.RefreshTokenHandle);
         });
     }
 }

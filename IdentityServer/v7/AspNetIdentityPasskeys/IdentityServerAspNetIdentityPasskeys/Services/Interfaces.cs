@@ -38,4 +38,5 @@ public class StoredCredential
     public string DeviceType { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
     public DateTime? LastUsed { get; set; }
+    public byte[]? PrfSalt { get; set; }
 }

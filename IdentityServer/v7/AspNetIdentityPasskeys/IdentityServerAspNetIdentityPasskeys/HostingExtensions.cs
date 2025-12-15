@@ -116,6 +116,13 @@ internal static class HostingExtensions
         builder.Services.AddSingleton<NativeOriginValidator>();
         builder.Services.AddHostedService<ChallengeCleanupService>();
 
+        // Register DPoP services
+        builder.Services.AddScoped<IPrfOutputStore, PrfOutputStore>();
+        builder.Services.AddScoped<DPoPProofValidator>();
+        builder.Services.AddScoped<IReplayCache, ReplayCache>();
+        builder.Services.AddScoped<IDeviceBindingStore, DeviceBindingStore>();
+        builder.Services.AddHttpContextAccessor();
+
         builder.Services
             .AddIdentityServer(options =>
             {
@@ -137,6 +144,10 @@ internal static class HostingExtensions
             .AddAspNetIdentity<ApplicationUser>()
             .AddServerSideSessions()
             .AddLicenseSummary();
+
+        // Register DPoP custom validators
+        builder.Services.AddTransient<Duende.IdentityServer.Validation.ICustomTokenRequestValidator, DPoPTokenRequestValidator>();
+        builder.Services.AddTransient<Duende.IdentityServer.Services.ISessionCoordinationService, DPoPSessionCoordinator>();
 
         builder.Services.AddAuthentication()
             .AddOpenIdConnect("oidc", "Sign-in with demo.duendesoftware.com", options =>

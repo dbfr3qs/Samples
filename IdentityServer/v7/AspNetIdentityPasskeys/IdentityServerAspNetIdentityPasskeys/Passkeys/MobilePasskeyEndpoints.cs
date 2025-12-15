@@ -4,6 +4,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using Fido2NetLib;
 using Fido2NetLib.Objects;
 using IdentityServerAspNetIdentityPasskeys.Models;
@@ -15,6 +16,7 @@ using Microsoft.EntityFrameworkCore;
 using Duende.IdentityServer.Services;
 using Duende.IdentityServer.Models;
 using Duende.IdentityServer.Stores;
+using Microsoft.IdentityModel.Tokens;
 
 namespace IdentityServerAspNetIdentityPasskeys.Passkeys;
 
@@ -104,6 +106,10 @@ public static class MobilePasskeyEndpoints
 
                 Console.WriteLine($"[DEBUG] Generated challenge ID: {challengeId}");
 
+                // Generate PRF salt for this user (deterministic based on userId)
+                var prfSalt = SHA256.HashData(Encoding.UTF8.GetBytes(userId));
+                Console.WriteLine($"[DEBUG] Generated PRF salt for user (length: {prfSalt.Length})");
+
                 return Results.Ok(new
                 {
                     challenge = Base64Url.Encode(options.Challenge),
@@ -118,7 +124,17 @@ public static class MobilePasskeyEndpoints
                     timeout = options.Timeout,
                     authenticatorSelection = options.AuthenticatorSelection,
                     attestation = options.Attestation.ToString().ToLower(),
-                    challengeId = challengeId
+                    challengeId = challengeId,
+                    extensions = new
+                    {
+                        prf = new
+                        {
+                            eval = new
+                            {
+                                first = Base64UrlEncoder.Encode(prfSalt)
+                            }
+                        }
+                    }
                 });
             }
             catch (Exception ex)
@@ -252,6 +268,9 @@ public static class MobilePasskeyEndpoints
                 Console.WriteLine($"[DEBUG] Counter: {result.Result.SignCount}");
                 Console.WriteLine($"[DEBUG] Attestation format: {result.Result.AttestationFormat}");
 
+                // Generate and store PRF salt
+                var prfSalt = SHA256.HashData(Encoding.UTF8.GetBytes(challengeData.UserId!));
+
                 await credentialStore.AddAsync(new StoredCredential
                 {
                     UserId = challengeData.UserId!,
@@ -262,7 +281,8 @@ public static class MobilePasskeyEndpoints
                     AaGuid = result.Result.AaGuid,
                     AttestationFormat = result.Result.AttestationFormat,
                     DeviceType = "iOS Platform Authenticator",
-                    CreatedAt = DateTime.UtcNow
+                    CreatedAt = DateTime.UtcNow,
+                    PrfSalt = prfSalt
                 });
 
                 Console.WriteLine("[DEBUG] Credential stored successfully");
@@ -313,13 +333,18 @@ public static class MobilePasskeyEndpoints
 
                 Console.WriteLine($"[DEBUG] Generated challenge ID: {challengeId}");
 
+                // Note: PRF salt will be retrieved from stored credential during authentication complete
                 return Results.Ok(new
                 {
                     challenge = Base64Url.Encode(options.Challenge),
                     timeout = options.Timeout,
                     rpId = options.RpId,
                     userVerification = options.UserVerification.ToString().ToLower(),
-                    challengeId = challengeId
+                    challengeId = challengeId,
+                    extensions = new
+                    {
+                        prf = new { }
+                    }
                 });
             }
             catch (Exception ex)
@@ -580,7 +605,7 @@ public static class MobilePasskeyEndpoints
                     CreationTime = DateTime.UtcNow,
                     Lifetime = 300,
                     RedirectUri = "com.idp.mobile://callback",
-                    RequestedScopes = new[] { "openid", "profile", "api" },
+                    RequestedScopes = new[] { "openid", "profile", "api", "offline_access" },
                     CodeChallenge = codeChallenge.Sha256(),
                     CodeChallengeMethod = codeChallengeMethod,
                     IsOpenId = true

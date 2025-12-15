@@ -1,12 +1,15 @@
 import Foundation
 import CryptoKit
 
-/// OAuth2 client with PKCE support for IdentityServer
+/// OAuth2 client with PKCE and DPoP support for IdentityServer
+@available(iOS 15.0, macOS 12.0, *)
 public final class OAuthClient: @unchecked Sendable {
     private let idpBaseURL: String
     private let clientId: String
     private let redirectUri: String
     private let tokenStorage: TokenStorage
+    private let dpopKeyManager: DPoPKeyManager
+    private let dpopProofGenerator: DPoPProofGenerator
     
     public init(
         idpBaseURL: String = "https://idp.dev.internal",
@@ -17,6 +20,8 @@ public final class OAuthClient: @unchecked Sendable {
         self.clientId = clientId
         self.redirectUri = redirectUri
         self.tokenStorage = TokenStorage()
+        self.dpopKeyManager = DPoPKeyManager()
+        self.dpopProofGenerator = DPoPProofGenerator()
     }
     
     // MARK: - PKCE Flow
@@ -43,8 +48,13 @@ public final class OAuthClient: @unchecked Sendable {
         return components?.url
     }
     
-    /// Exchange authorization code for tokens
-    public func exchangeCodeForTokens(code: String, codeVerifier: String) async throws -> TokenResponse {
+    /// Exchange authorization code for tokens with DPoP support
+    public func exchangeCodeForTokens(
+        code: String,
+        codeVerifier: String,
+        prfOutput: Data? = nil,
+        credentialId: Data? = nil
+    ) async throws -> TokenResponse {
         let url = URL(string: "\(idpBaseURL)/connect/token")!
         
         var request = URLRequest(url: url)
@@ -63,12 +73,36 @@ public final class OAuthClient: @unchecked Sendable {
         print("🔐 [OAuth] Code verifier: \(codeVerifier)")
         print("🔐 [OAuth] Code verifier length: \(codeVerifier.count)")
         
+        // Add DPoP proof if PRF output and credential ID are available
+        if let prfOutput = prfOutput, let credentialId = credentialId {
+            do {
+                let (privateKey, jwk, thumbprint) = try dpopKeyManager.getOrDeriveKey(
+                    prfOutput: prfOutput,
+                    credentialId: credentialId
+                )
+                
+                let dpopProof = try dpopProofGenerator.generateProof(
+                    privateKey: privateKey,
+                    jwk: jwk,
+                    httpMethod: "POST",
+                    httpUri: url.absoluteString
+                )
+                
+                request.setValue(dpopProof, forHTTPHeaderField: "DPoP")
+                print("✅ [OAuth] Added DPoP proof to token request (thumbprint: \(thumbprint.prefix(20))...)")
+            } catch {
+                print("⚠️ [OAuth] Failed to generate DPoP proof: \(error), continuing without DPoP")
+            }
+        }
+        
         request.httpBody = body.percentEncoded()
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
+            let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
+            print("❌ [OAuth] Token exchange failed: \(errorBody)")
             throw OAuthError.tokenExchangeFailed
         }
         
@@ -87,8 +121,8 @@ public final class OAuthClient: @unchecked Sendable {
         return tokenResponse
     }
     
-    /// Refresh access token using refresh token
-    public func refreshAccessToken() async throws -> TokenResponse {
+    /// Refresh access token using refresh token with DPoP support
+    public func refreshAccessToken(credentialId: Data? = nil) async throws -> TokenResponse {
         guard let refreshToken = tokenStorage.getRefreshToken() else {
             throw OAuthError.noRefreshToken
         }
@@ -105,12 +139,36 @@ public final class OAuthClient: @unchecked Sendable {
             "client_id": clientId
         ]
         
+        // Add DPoP proof if credential ID is available (uses cached key, no PRF prompt)
+        if let credentialId = credentialId {
+            do {
+                let (privateKey, jwk, thumbprint) = try dpopKeyManager.getOrDeriveKey(
+                    prfOutput: nil,
+                    credentialId: credentialId
+                )
+                
+                let dpopProof = try dpopProofGenerator.generateProof(
+                    privateKey: privateKey,
+                    jwk: jwk,
+                    httpMethod: "POST",
+                    httpUri: url.absoluteString
+                )
+                
+                request.setValue(dpopProof, forHTTPHeaderField: "DPoP")
+                print("✅ [OAuth] Added DPoP proof to refresh request (thumbprint: \(thumbprint.prefix(20))...)")
+            } catch {
+                print("⚠️ [OAuth] Failed to generate DPoP proof: \(error), continuing without DPoP")
+            }
+        }
+        
         request.httpBody = body.percentEncoded()
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
+            let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
+            print("❌ [OAuth] Token refresh failed: \(errorBody)")
             throw OAuthError.refreshFailed
         }
         
@@ -130,13 +188,13 @@ public final class OAuthClient: @unchecked Sendable {
     }
     
     /// Get valid access token, refreshing if necessary
-    public func getValidAccessToken() async throws -> String {
+    public func getValidAccessToken(credentialId: Data? = nil) async throws -> String {
         if tokenStorage.isAccessTokenValid(), let token = tokenStorage.getAccessToken() {
             return token
         }
         
         // Token expired or missing, try to refresh
-        let tokenResponse = try await refreshAccessToken()
+        let tokenResponse = try await refreshAccessToken(credentialId: credentialId)
         return tokenResponse.accessToken
     }
     

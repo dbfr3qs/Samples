@@ -1,0 +1,35 @@
+[req]
+default_bits = 2048
+prompt = no
+default_md = sha256
+distinguished_name = dn
+req_extensions = v3_req
+x509_extensions = v3_ca
+
+[dn]
+C=NZ
+ST=Auckland
+L=Auckland
+O=Development
+OU=WebView
+CN=web.dev.internal
+
+[v3_req]
+subjectAltName = @alt_names
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+
+[v3_ca]
+subjectAltName = @alt_names
+keyUsage = critical, digitalSignature, keyEncipherment, keyCertSign
+extendedKeyUsage = serverAuth
+basicConstraints = critical, CA:TRUE
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer
+
+[alt_names]
+DNS.1 = web.dev.internal
+DNS.2 = *.dev.internal
+DNS.3 = localhost
+IP.1 = 192.168.178.153
+IP.2 = 127.0.0.1

@@ -1,0 +1,15 @@
+﻿@page
+@model IndexModel
+@{
+    ViewData["Title"] = "WebView Content";
+}
+
+<div style="padding: 20px;">
+    <h1>Hello from WebView!</h1>
+    <p>This is a simple page loaded in the iOS app's webview.</p>
+    <p>Current time: @DateTime.Now.ToString("HH:mm:ss")</p>
+    
+    <button onclick="alert('Button clicked!')" style="padding: 10px 20px; font-size: 16px; margin-top: 20px;">
+        Click Me
+    </button>
+</div>

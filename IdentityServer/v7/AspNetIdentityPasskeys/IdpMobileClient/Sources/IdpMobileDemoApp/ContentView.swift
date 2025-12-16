@@ -2,9 +2,11 @@ import SwiftUI
 import AuthenticationServices
 import IdpMobileClient
 import CryptoKit
+import WebKit
 
 struct ContentView: View {
     @StateObject private var viewModel = AuthViewModel()
+    @State private var showWebView = false
     
     var body: some View {
         NavigationView {
@@ -34,6 +36,20 @@ struct ContentView: View {
                                     .foregroundColor(.green)
                             }
                             .padding(.vertical, 4)
+                        }
+                        
+                        Button(action: {
+                            showWebView = true
+                        }) {
+                            HStack {
+                                Image(systemName: "globe")
+                                Text("Open WebView")
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.purple)
+                            .foregroundColor(.white)
+                            .cornerRadius(10)
                         }
                         
                         Button(action: {
@@ -175,6 +191,9 @@ struct ContentView: View {
             .navigationTitle("IdP Demo")
             .sheet(isPresented: $viewModel.showRegistration) {
                 RegistrationView(viewModel: viewModel)
+            }
+            .sheet(isPresented: $showWebView) {
+                WebViewScreen(url: URL(string: "https://web.dev.internal:5003")!)
             }
         }
     }
@@ -668,6 +687,61 @@ extension AuthViewModel: ASAuthorizationControllerPresentationContextProviding {
             .compactMap { $0 as? UIWindowScene }
             .flatMap { $0.windows }
             .first { $0.isKeyWindow } ?? UIWindow()
+    }
+}
+
+// MARK: - WebView Components
+
+struct WebViewWrapper: UIViewRepresentable {
+    let url: URL
+    
+    func makeUIView(context: Context) -> WKWebView {
+        let webView = WKWebView()
+        webView.navigationDelegate = context.coordinator
+        return webView
+    }
+    
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        let request = URLRequest(url: url)
+        webView.load(request)
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+    
+    class Coordinator: NSObject, WKNavigationDelegate {
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            print("🌐 [WebView] Started loading: \(webView.url?.absoluteString ?? "unknown")")
+        }
+        
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            print("✅ [WebView] Finished loading: \(webView.url?.absoluteString ?? "unknown")")
+        }
+        
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            print("❌ [WebView] Failed to load: \(error.localizedDescription)")
+        }
+    }
+}
+
+struct WebViewScreen: View {
+    let url: URL
+    @Environment(\.dismiss) var dismiss
+    
+    var body: some View {
+        NavigationView {
+            WebViewWrapper(url: url)
+                .navigationTitle("Web Content")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button("Close") {
+                            dismiss()
+                        }
+                    }
+                }
+        }
     }
 }
 

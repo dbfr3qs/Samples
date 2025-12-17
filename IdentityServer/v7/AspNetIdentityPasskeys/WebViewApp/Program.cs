@@ -18,6 +18,52 @@ builder.WebHost.ConfigureKestrel(serverOptions =>
     });
 });
 
+// Add authentication
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultScheme = "Cookies";
+    options.DefaultChallengeScheme = "oidc";
+})
+.AddCookie("Cookies", options =>
+{
+    options.Cookie.Name = ".AspNetCore.WebViewApp";
+    options.Cookie.Domain = "web.dev.internal";
+    options.Cookie.SameSite = SameSiteMode.None;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+})
+.AddOpenIdConnect("oidc", options =>
+{
+    options.Authority = "https://idp.dev.internal";
+    options.ClientId = "webview-client";
+    options.ClientSecret = "webview-secret";
+    options.ResponseType = "code";
+    options.SaveTokens = true;
+    
+    options.Scope.Clear();
+    options.Scope.Add("openid");
+    options.Scope.Add("profile");
+    
+    options.GetClaimsFromUserInfoEndpoint = true;
+    options.MapInboundClaims = false;
+    options.RequireHttpsMetadata = true;
+    
+    // Handle id_token_hint from query string for login hint
+    options.Events.OnRedirectToIdentityProvider = context =>
+    {
+        // Check if id_token_hint was passed in the original request
+        if (context.HttpContext.Request.Query.TryGetValue("id_token_hint", out var idTokenHint))
+        {
+            context.ProtocolMessage.IdTokenHint = idTokenHint;
+            // Don't use prompt=none since mobile passkey auth doesn't create browser sessions
+            // The id_token_hint will help IdentityServer identify the user
+            Console.WriteLine($"[WebView] Using id_token_hint as login hint");
+        }
+        return Task.CompletedTask;
+    };
+});
+
+builder.Services.AddAuthorization();
+
 // Add services to the container.
 builder.Services.AddRazorPages();
 
@@ -34,9 +80,13 @@ app.UseHttpsRedirection();
 
 app.UseRouting();
 
+app.UseAuthentication();
+app.UseAuthorization();
+
 app.MapStaticAssets();
 app.MapRazorPages()
-   .WithStaticAssets();
+   .WithStaticAssets()
+   .RequireAuthorization();
 
 Console.WriteLine("WebView app starting on https://web.dev.internal:5003");
 

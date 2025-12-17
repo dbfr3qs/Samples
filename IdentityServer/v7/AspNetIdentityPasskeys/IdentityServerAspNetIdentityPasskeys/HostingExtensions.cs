@@ -8,6 +8,7 @@ using IdentityServerAspNetIdentityPasskeys.Data;
 using IdentityServerAspNetIdentityPasskeys.Models;
 using IdentityServerAspNetIdentityPasskeys.Passkeys;
 using IdentityServerAspNetIdentityPasskeys.Services;
+using IdentityServerAspNetIdentityPasskeys.Endpoints;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -148,6 +149,12 @@ internal static class HostingExtensions
         // Register DPoP custom validators
         builder.Services.AddTransient<Duende.IdentityServer.Validation.ICustomTokenRequestValidator, DPoPTokenRequestValidator>();
         builder.Services.AddTransient<Duende.IdentityServer.Services.ISessionCoordinationService, DPoPSessionCoordinator>();
+        
+        // Register mobile session store for passkey authentication
+        builder.Services.AddSingleton<IMobileSessionStore, MobileSessionStore>();
+        
+        // Register session exchange validator (Scoped because it depends on IReplayCache which is Scoped)
+        builder.Services.AddScoped<SessionExchangeValidator>();
 
         builder.Services.AddAuthentication()
             .AddOpenIdConnect("oidc", "Sign-in with demo.duendesoftware.com", options =>
@@ -206,6 +213,7 @@ internal static class HostingExtensions
 
         app.MapPasskeyEndpoints();
         app.MapMobilePasskeyEndpoints(); // Mobile passkey endpoints with full FIDO2/WebAuthn cryptographic validation
+        app.MapSessionExchange(); // Session exchange endpoint for mobile WebView authentication
 
         app.MapRazorPages()
             .RequireAuthorization();

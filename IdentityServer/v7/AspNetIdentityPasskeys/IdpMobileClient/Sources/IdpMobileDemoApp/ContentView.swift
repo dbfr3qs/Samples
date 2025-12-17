@@ -39,7 +39,15 @@ struct ContentView: View {
                         }
                         
                         Button(action: {
-                            showWebView = true
+                            Task {
+                                do {
+                                    try await viewModel.prepareAuthenticatedWebView()
+                                    showWebView = true
+                                } catch {
+                                    print("❌ Failed to prepare WebView: \(error)")
+                                    viewModel.errorMessage = "Failed to prepare WebView: \(error.localizedDescription)"
+                                }
+                            }
                         }) {
                             HStack {
                                 Image(systemName: "globe")
@@ -51,6 +59,7 @@ struct ContentView: View {
                             .foregroundColor(.white)
                             .cornerRadius(10)
                         }
+                        .disabled(viewModel.isLoading)
                         
                         Button(action: {
                             Task {
@@ -193,7 +202,11 @@ struct ContentView: View {
                 RegistrationView(viewModel: viewModel)
             }
             .sheet(isPresented: $showWebView) {
-                WebViewScreen(url: URL(string: "https://web.dev.internal:5003")!)
+                if let cookies = viewModel.sessionCookies {
+                    AuthenticatedWebViewScreen(sessionCookies: cookies)
+                } else {
+                    Text("Loading...")
+                }
             }
         }
     }
@@ -275,11 +288,17 @@ class AuthViewModel: NSObject, ObservableObject {
     @Published var apiResponse: String?
     @Published var username: String?
     @Published var showRegistration = false
+    @Published var sessionId: String?
+    @Published var sessionCookies: [HTTPCookie]?
+    @Published var userId: String?
     
     private let oauthClient = OAuthClient()
     private let passkeyService = PasskeyAuthService()
     private let secureStorage = SecureStorage()
     private var apiClient: ApiClient!
+    private let dpopKeyManager = DPoPKeyManager()
+    private let sessionAssertionGenerator = SessionAssertionGenerator()
+    private let sessionExchangeClient = SessionExchangeClient()
     
     private var authController: ASAuthorizationController?
     @Published var currentCodeVerifier: String?
@@ -437,14 +456,140 @@ class AuthViewModel: NSObject, ObservableObject {
     }
     
     func signOut() {
-        oauthClient.signOut()
+        let tokenStorage = TokenStorage()
+        tokenStorage.clearTokens()
         isAuthenticated = false
         username = nil
         apiResponse = nil
-        errorMessage = nil
         hasDPoPBinding = false
-        currentCredentialId = nil
+        sessionId = nil
+        sessionCookies = nil
+        userId = nil
+        
+        // Clear persisted credential ID
         try? secureStorage.deleteCurrentCredentialId()
+        currentCredentialId = nil
+        
+        print("✅ [Auth] Signed out successfully")
+    }
+    
+    func prepareAuthenticatedWebView() async throws {
+        // Get session ID from stored ID token
+        let tokenStorage = TokenStorage()
+        guard let idToken = tokenStorage.getIdToken() else {
+            throw NSError(domain: "AuthViewModel", code: 1, userInfo: [NSLocalizedDescriptionKey: "No ID token available. Please sign in again."])
+        }
+        
+        // Extract session ID and user ID from ID token
+        guard let sessionId = extractSessionId(from: idToken) else {
+            throw NSError(domain: "AuthViewModel", code: 2, userInfo: [NSLocalizedDescriptionKey: "No session ID in ID token. Please sign in again."])
+        }
+        
+        guard let userId = extractUserId(from: idToken) else {
+            throw NSError(domain: "AuthViewModel", code: 3, userInfo: [NSLocalizedDescriptionKey: "No user ID in ID token."])
+        }
+        
+        guard let credentialId = currentCredentialId else {
+            throw NSError(domain: "AuthViewModel", code: 4, userInfo: [NSLocalizedDescriptionKey: "No credential ID available"])
+        }
+        
+        print("🔐 [Auth] Preparing authenticated WebView via session exchange...")
+        print("   Session ID: \(sessionId)")
+        print("   User ID: \(userId)")
+        
+        // Get DPoP key
+        let (privateKey, jwk, thumbprint) = try dpopKeyManager.getOrDeriveKey(
+            prfOutput: nil,
+            credentialId: credentialId
+        )
+        
+        print("   DPoP thumbprint: \(thumbprint.prefix(20))...")
+        
+        // Generate session assertion
+        let assertion = try sessionAssertionGenerator.generateSessionAssertion(
+            sessionId: sessionId,
+            userId: userId,
+            privateKey: privateKey,
+            jwk: jwk,
+            idpUrl: "https://idp.dev.internal"
+        )
+        
+        // Exchange for IdP session cookies
+        let response = try await sessionExchangeClient.exchangeForSession(assertion: assertion)
+        
+        self.sessionCookies = response.cookies
+        
+        print("✅ [Auth] Received \(response.cookies.count) session cookies for WebView")
+    }
+    
+    private func extractSessionId(from idToken: String) -> String? {
+        print("🔍 [Auth] Extracting session ID from ID token...")
+        print("🔍 [Auth] Full ID token: \(idToken)")
+        
+        let parts = idToken.split(separator: ".")
+        guard parts.count == 3 else {
+            print("⚠️ [Auth] Invalid ID token format - expected 3 parts, got \(parts.count)")
+            return nil
+        }
+        
+        print("🔍 [Auth] ID token header: \(parts[0])")
+        print("🔍 [Auth] ID token payload: \(parts[1])")
+        print("🔍 [Auth] ID token signature: \(parts[2])")
+        
+        // JWT uses base64url encoding, need to convert to standard base64
+        var base64 = String(parts[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        
+        // Add padding if needed
+        let remainder = base64.count % 4
+        if remainder > 0 {
+            base64 += String(repeating: "=", count: 4 - remainder)
+        }
+        
+        guard let payloadData = Data(base64Encoded: base64) else {
+            print("⚠️ [Auth] Failed to decode ID token payload")
+            print("🔍 [Auth] Base64 payload (first 100 chars): \(base64.prefix(100))...")
+            return nil
+        }
+        
+        guard let payload = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any] else {
+            print("⚠️ [Auth] Failed to parse ID token payload")
+            return nil
+        }
+        
+        print("🔍 [Auth] ID token payload claims: \(payload.keys.sorted())")
+        print("🔍 [Auth] Full payload: \(payload)")
+        
+        if let sid = payload["sid"] as? String {
+            print("✅ [Auth] Extracted session ID: \(sid)")
+            return sid
+        }
+        
+        print("⚠️ [Auth] No sid claim in ID token")
+        print("🔍 [Auth] Available claims: \(payload.keys.joined(separator: ", "))")
+        return nil
+    }
+    
+    private func extractUserId(from idToken: String) -> String? {
+        let parts = idToken.split(separator: ".")
+        guard parts.count == 3 else { return nil }
+        
+        // JWT uses base64url encoding, need to convert to standard base64
+        var base64 = String(parts[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        
+        // Add padding if needed
+        let remainder = base64.count % 4
+        if remainder > 0 {
+            base64 += String(repeating: "=", count: 4 - remainder)
+        }
+        
+        guard let payloadData = Data(base64Encoded: base64) else { return nil }
+        guard let payload = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any] else { return nil }
+        
+        return payload["sub"] as? String
     }
     
     private func handleRegistrationSuccess(credential: ASAuthorizationPlatformPublicKeyCredentialRegistration) async {
@@ -581,9 +726,10 @@ class AuthViewModel: NSObject, ObservableObject {
             
             // Step 5: Exchange authorization code for tokens with DPoP support
             print("🔐 [OAuth] Exchanging code for tokens...")
+            let tokenResponse: TokenResponse
             if let prfOutput = prfOutput {
                 print("✅ [DPoP] PRF output available, enabling DPoP binding")
-                let tokenResponse = try await oauthClient.exchangeCodeForTokens(
+                tokenResponse = try await oauthClient.exchangeCodeForTokens(
                     code: result.code,
                     codeVerifier: verifier,
                     prfOutput: prfOutput,
@@ -593,12 +739,20 @@ class AuthViewModel: NSObject, ObservableObject {
                 print("✅ [DPoP] Token exchange successful with DPoP binding!")
             } else {
                 print("ℹ️ [OAuth] PRF not available, using standard token exchange")
-                let tokenResponse = try await oauthClient.exchangeCodeForTokens(
+                tokenResponse = try await oauthClient.exchangeCodeForTokens(
                     code: result.code,
                     codeVerifier: verifier
                 )
                 hasDPoPBinding = false
                 print("✅ [OAuth] Token exchange successful (without DPoP)")
+            }
+            
+            // Extract session ID and user ID from ID token
+            if let idToken = tokenResponse.idToken {
+                self.sessionId = extractSessionId(from: idToken)
+                self.userId = extractUserId(from: idToken)
+                print("✅ [Auth] Session ID: \(sessionId ?? "none")")
+                print("✅ [Auth] User ID: \(userId ?? "none")")
             }
             
             // Success!
@@ -692,17 +846,113 @@ extension AuthViewModel: ASAuthorizationControllerPresentationContextProviding {
 
 // MARK: - WebView Components
 
-struct WebViewWrapper: UIViewRepresentable {
-    let url: URL
+struct AuthenticatedWebViewWrapper: UIViewRepresentable {
+    let cookies: [HTTPCookie]
+    let initialUrl: URL
     
     func makeUIView(context: Context) -> WKWebView {
-        let webView = WKWebView()
+        let config = WKWebViewConfiguration()
+        let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         return webView
     }
     
     func updateUIView(_ webView: WKWebView, context: Context) {
-        let request = URLRequest(url: url)
+        let dataStore = webView.configuration.websiteDataStore
+        let cookieStore = dataStore.httpCookieStore
+        
+        let group = DispatchGroup()
+        
+        print("🍪 [WebView] Injecting \(cookies.count) cookies...")
+        
+        for cookie in cookies {
+            group.enter()
+            cookieStore.setCookie(cookie) {
+                print("✅ [WebView] Set cookie: \(cookie.name) for domain: \(cookie.domain)")
+                group.leave()
+            }
+        }
+        
+        group.notify(queue: .main) {
+            print("🌐 [WebView] All cookies set, loading: \(initialUrl)")
+            let request = URLRequest(url: initialUrl)
+            webView.load(request)
+        }
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+    
+    class Coordinator: NSObject, WKNavigationDelegate {
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            print("🌐 [WebView] Started loading: \(webView.url?.absoluteString ?? "unknown")")
+        }
+        
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            print("✅ [WebView] Finished loading: \(webView.url?.absoluteString ?? "unknown")")
+        }
+        
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            print("❌ [WebView] Failed to load: \(error.localizedDescription)")
+        }
+        
+        func webView(_ webView: WKWebView, 
+                    decidePolicyFor navigationAction: WKNavigationAction, 
+                    decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            print("🔀 [WebView] Navigation to: \(navigationAction.request.url?.absoluteString ?? "unknown")")
+            decisionHandler(.allow)
+        }
+    }
+}
+
+struct AuthenticatedWebViewScreen: View {
+    let sessionCookies: [HTTPCookie]
+    @Environment(\.dismiss) var dismiss
+    
+    var body: some View {
+        NavigationView {
+            AuthenticatedWebViewWrapper(
+                cookies: sessionCookies,
+                initialUrl: buildLoginUrl()
+            )
+            .navigationTitle("Web Content")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Close") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+    
+    private func buildLoginUrl() -> URL {
+        // Load the IdP login endpoint with returnUrl to the WebView app
+        var components = URLComponents(string: "https://idp.dev.internal/Account/Login")!
+        components.queryItems = [
+            URLQueryItem(name: "returnUrl", value: "https://web.dev.internal:5003")
+        ]
+        
+        print("🌐 [WebView] Loading IdP login with returnUrl to WebView app")
+        return components.url!
+    }
+}
+
+struct SimpleWebViewWrapper: UIViewRepresentable {
+    let initialUrl: URL
+    
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.navigationDelegate = context.coordinator
+        return webView
+    }
+    
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        print("🌐 [WebView] Loading: \(initialUrl)")
+        let request = URLRequest(url: initialUrl)
         webView.load(request)
     }
     
@@ -722,25 +972,12 @@ struct WebViewWrapper: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             print("❌ [WebView] Failed to load: \(error.localizedDescription)")
         }
-    }
-}
-
-struct WebViewScreen: View {
-    let url: URL
-    @Environment(\.dismiss) var dismiss
-    
-    var body: some View {
-        NavigationView {
-            WebViewWrapper(url: url)
-                .navigationTitle("Web Content")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("Close") {
-                            dismiss()
-                        }
-                    }
-                }
+        
+        func webView(_ webView: WKWebView, 
+                    decidePolicyFor navigationAction: WKNavigationAction, 
+                    decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            print("🔀 [WebView] Navigation to: \(navigationAction.request.url?.absoluteString ?? "unknown")")
+            decisionHandler(.allow)
         }
     }
 }

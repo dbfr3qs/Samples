@@ -16,6 +16,7 @@ using Microsoft.EntityFrameworkCore;
 using Duende.IdentityServer.Services;
 using Duende.IdentityServer.Models;
 using Duende.IdentityServer.Stores;
+using Duende.IdentityServer.Configuration;
 using Microsoft.IdentityModel.Tokens;
 
 namespace IdentityServerAspNetIdentityPasskeys.Passkeys;
@@ -393,13 +394,14 @@ public static class MobilePasskeyEndpoints
         // Complete authentication - performs FULL FIDO2 assertion verification with signature validation
         apiGroup.MapPost("/authenticate/complete", async (
             HttpContext context,
-            [FromServices] IFido2 fido2,
+            [FromServices] IAuthorizationCodeStore codeStore,
+            [FromServices] IMobileSessionStore mobileSessionStore,
             [FromServices] IChallengeStore challengeStore,
+            [FromServices] IFido2 fido2,
             [FromServices] ICredentialStore credentialStore,
             [FromServices] SignInManager<ApplicationUser> signInManager,
             [FromServices] UserManager<ApplicationUser> userManager,
             [FromServices] NativeOriginValidator originValidator,
-            [FromServices] IAuthorizationCodeStore codeStore,
             [FromBody] CompleteAuthenticationRequest request) =>
         {
             try
@@ -664,6 +666,26 @@ public static class MobilePasskeyEndpoints
                     identity.AddClaim(new Claim("idp", "local"));
                 }
                 
+                // Create a mobile session for passkey authentication
+                // This session will be used for WebView SSO via session exchange
+                var sessionId = Guid.NewGuid().ToString("N"); // Use Guid for session ID
+                var sessionKey = Guid.NewGuid().ToString("N"); // Separate key for storage
+                
+                var mobileSession = new MobileSession
+                {
+                    SessionId = sessionId,
+                    Key = sessionKey,
+                    SubjectId = user.Id,
+                    DisplayName = user.UserName ?? user.Email ?? "Unknown",
+                    Created = DateTime.UtcNow,
+                    Expires = DateTime.UtcNow.AddHours(10),
+                    Claims = identity?.Claims.ToDictionary(c => c.Type, c => c.Value) ?? new Dictionary<string, string>()
+                };
+                
+                await mobileSessionStore.CreateSessionAsync(mobileSession);
+                Console.WriteLine($"[DEBUG] Auth - Created mobile session: {sessionId} with key: {sessionKey}");
+                
+                // Sign in the user (creates ASP.NET Identity cookie, separate from mobile session)
                 await signInManager.SignInAsync(user, isPersistent: false);
                 Console.WriteLine("[DEBUG] Auth - User signed in successfully");
 
@@ -686,11 +708,12 @@ public static class MobilePasskeyEndpoints
                     RequestedScopes = new[] { "openid", "profile", "api", "offline_access" },
                     CodeChallenge = codeChallenge.Sha256(),
                     CodeChallengeMethod = codeChallengeMethod,
-                    IsOpenId = true
+                    IsOpenId = true,
+                    SessionId = sessionId // Link to the created session
                 };
 
                 var codeValue = await codeStore.StoreAuthorizationCodeAsync(code);
-                Console.WriteLine($"[DEBUG] Auth - Generated authorization code");
+                Console.WriteLine($"[DEBUG] Auth - Generated authorization code with session ID: {sessionId}");
 
                 return Results.Ok(new
                 {

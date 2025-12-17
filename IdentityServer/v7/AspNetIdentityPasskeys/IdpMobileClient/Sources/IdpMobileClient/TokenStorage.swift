@@ -25,6 +25,14 @@ public final class TokenStorage: @unchecked Sendable {
         return getFromKeychain(key: "refresh_token")
     }
     
+    public func saveIdToken(_ token: String) throws {
+        try saveToKeychain(key: "id_token", value: token)
+    }
+    
+    public func getIdToken() -> String? {
+        return getFromKeychain(key: "id_token")
+    }
+    
     public func saveTokenExpiry(_ expiry: Date) throws {
         let timestamp = expiry.timeIntervalSince1970
         try saveToKeychain(key: "token_expiry", value: String(timestamp))
@@ -49,6 +57,7 @@ public final class TokenStorage: @unchecked Sendable {
     public func clearTokens() {
         deleteFromKeychain(key: "access_token")
         deleteFromKeychain(key: "refresh_token")
+        deleteFromKeychain(key: "id_token")
         deleteFromKeychain(key: "token_expiry")
     }
     

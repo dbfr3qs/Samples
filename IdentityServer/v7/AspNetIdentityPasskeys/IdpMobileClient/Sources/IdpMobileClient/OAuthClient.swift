@@ -113,6 +113,14 @@ public final class OAuthClient: @unchecked Sendable {
         if let refreshToken = tokenResponse.refreshToken {
             try tokenStorage.saveRefreshToken(refreshToken)
         }
+        if let idToken = tokenResponse.idToken {
+            try tokenStorage.saveIdToken(idToken)
+            print("✅ [OAuth] Stored ID token")
+            print("🔍 [OAuth] ID token (first 100 chars): \(idToken.prefix(100))...")
+            print("🔍 [OAuth] ID token length: \(idToken.count)")
+        } else {
+            print("⚠️ [OAuth] No ID token in response!")
+        }
         if let expiresIn = tokenResponse.expiresIn {
             let expiry = Date().addingTimeInterval(TimeInterval(expiresIn))
             try tokenStorage.saveTokenExpiry(expiry)
@@ -228,6 +236,7 @@ public struct TokenResponse: Codable, Sendable {
     public let expiresIn: Int?
     public let tokenType: String
     public let scope: String?
+    public let idToken: String?
     
     enum CodingKeys: String, CodingKey {
         case accessToken = "access_token"
@@ -235,6 +244,7 @@ public struct TokenResponse: Codable, Sendable {
         case expiresIn = "expires_in"
         case tokenType = "token_type"
         case scope
+        case idToken = "id_token"
     }
 }
 

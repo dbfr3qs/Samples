@@ -92,8 +92,32 @@ public static class Config
                 RefreshTokenExpiration = TokenExpiration.Sliding,
                 SlidingRefreshTokenLifetime = 1296000, // 15 days
                 RequireDPoP = true,
+                
+                // Enable server-side sessions to get sid claim in ID token
+                CoordinateLifetimeWithUserSession = true,
 
                 AllowedScopes = { "openid", "profile", "api" }
+            },
+
+            // webview confidential client for mobile app
+            new Client
+            {
+                ClientId = "webview-client",
+                ClientName = "WebView Application",
+                ClientSecrets = { new Secret("webview-secret".Sha256()) },
+
+                AllowedGrantTypes = GrantTypes.Code,
+                RequireClientSecret = true, // Confidential client (server-side)
+                RequirePkce = true,
+
+                RedirectUris = { "https://web.dev.internal:5003/signin-oidc" },
+                PostLogoutRedirectUris = { "https://web.dev.internal:5003/signout-callback-oidc" },
+                FrontChannelLogoutUri = "https://web.dev.internal:5003/signout-oidc",
+
+                AllowOfflineAccess = false,
+                RequireConsent = false,
+
+                AllowedScopes = { "openid", "profile" }
             },
         };
 }

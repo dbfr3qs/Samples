@@ -1,20 +1,22 @@
 # AspNetIdentityPasskeys Setup Guide
 
-This guide explains how to set up and run the AspNetIdentityPasskeys ios native passkeys example, which demonstrates passkey authentication using a mobile app natively, rather than a browser-based flow. This implementation uses the netfido2 library for server-side passkey handling.
+This guide explains how to set up and run the AspNetIdentityPasskeys example, which demonstrates a theoretical way to authenticate mobile webviews authentication using WebAuthn/Passkeys with DPoP token binding, server side sessions and PRF-based device binding.
 
 ## Overview
 
 This example includes:
-- **IdentityServer** with passkey authentication support
-- **API** protected by IdentityServer
-- **iOS Mobile Client** with native passkey authentication
+- **IdentityServer** with passkey authentication, DPoP validation, and mobile session management
+- **API** protected by DPoP-bound tokens
+- **WebView App** demonstrating SSO via session exchange
+- **iOS Mobile Client** with native passkey authentication, DPoP proofs, and WebView integration
 
 ## Prerequisites
 
-- .NET 8.0 SDK or later
+- .NET 10.0 SDK or later
 - macOS (for iOS development)
 - Xcode 15.0+ (for mobile client)
-- iOS 18+ device or simulator (for mobile client)
+- iOS 18+ device or simulator (for PRF extension support)
+- Make sure all apps are running on the same network
 
 ## Quick Start
 
@@ -25,7 +27,9 @@ cd IdentityServerAspNetIdentityPasskeys
 dotnet run
 ```
 
-The server will run on `https://localhost:5001`
+The server will run on:
+- `https://localhost:5001`
+- `https://idp.dev.internal:5001` (for mobile testing)
 
 ### 2. Access the Application
 
@@ -44,14 +48,16 @@ https://localhost:5001
 
 ## Running the API
 
-The API is a protected resource that requires authentication from IdentityServer.
+The API is a protected resource that requires DPoP-bound tokens from IdentityServer.
 
 ```bash
 cd Api
 dotnet run
 ```
 
-The API will run on `https://localhost:5002`
+The API will run on:
+- `https://localhost:5002`
+- `https://api.dev.internal:5002` (for mobile testing)
 
 ### Test the API
 
@@ -59,9 +65,26 @@ The API will run on `https://localhost:5002`
 # Without authentication (should return 401)
 curl -k https://localhost:5002/claims
 
-# With authentication (requires access token from IdentityServer)
-curl -k -H "Authorization: Bearer YOUR_ACCESS_TOKEN" https://localhost:5002/claims
+# With DPoP-bound token (requires DPoP proof header)
+curl -k -H "Authorization: DPoP YOUR_ACCESS_TOKEN" \
+     -H "DPoP: YOUR_DPOP_PROOF" \
+     https://localhost:5002/claims
 ```
+
+## Running the WebView App
+
+The WebView app demonstrates SSO via session exchange from the mobile app.
+
+```bash
+cd WebViewApp
+dotnet run
+```
+
+The app will run on:
+- `https://localhost:5003`
+- `https://web.dev.internal:5003` (for mobile testing)
+
+The mobile app injects authentication cookies into a WebView that loads this app, demonstrating seamless SSO without requiring the user to log in again.
 
 ## iOS Mobile Client Setup
 
@@ -97,7 +120,8 @@ This will:
 1. Select an iOS 18 simulator or device
 2. Press ⌘R to build and run
 3. Tap "Sign in with Passkey" to authenticate
-4. Tap "Call API" to test authenticated API calls
+4. Tap "Call API" to test DPoP-protected API calls
+5. Tap "Open WebView" to test SSO via session exchange
 
 ## iPhone Testing (Local Network)
 
@@ -136,6 +160,11 @@ Generate certificates for the custom domains:
 # For API
 ./generate-api-cert.sh
 ./export-api-cert-for-iphone.sh
+
+# For WebView
+./generate-web-cert.sh
+./export-web-cert-for-iphone.sh
+
 ```
 
 Certificates will be exported to your Desktop.
@@ -145,6 +174,7 @@ Certificates will be exported to your Desktop.
 1. **Transfer certificates to iPhone** (via AirDrop, email, or iCloud)
    - `aspnetcore-dev-cert.cer` (for IdentityServer)
    - `api-dev-cert.cer` (for API)
+   - `web-dev-cert.cer` (for WebView)
 
 2. **Install each certificate:**
    - Tap the certificate file
@@ -198,7 +228,7 @@ Update the IdentityServer and API to listen on custom domains:
 
 ### IdentityServer Client Configuration
 
-The mobile client requires this OAuth client configuration:
+The mobile client requires this OAuth client configuration with DPoP support:
 
 ```csharp
 new Client
@@ -209,6 +239,7 @@ new Client
     AllowedGrantTypes = GrantTypes.Code,
     RequirePkce = true,
     RequireClientSecret = false,
+    RequireDPoP = true,  // Require DPoP for token binding
     
     RedirectUris = { "com.idp.mobile://callback" },
     PostLogoutRedirectUris = { "com.idp.mobile://callback" },
@@ -224,6 +255,26 @@ new Client
     AllowOfflineAccess = true,
     AccessTokenLifetime = 3600
 }
+
+The WebView app requires this client configuration:
+
+new Client
+{
+    ClientId = "webview-client",
+    ClientName = "WebView Client",
+    
+    AllowedGrantTypes = GrantTypes.Code,
+    RequirePkce = true,
+    RequireClientSecret = false,
+    
+    RedirectUris = { "https://web.dev.internal:5003/signin-oidc" },
+    PostLogoutRedirectUris = { "https://web.dev.internal:5003/signout-callback-oidc" },
+    
+    AllowedScopes = {
+        IdentityServerConstants.StandardScopes.OpenId,
+        IdentityServerConstants.StandardScopes.Profile
+    }
+}
 ```
 
 ### Mobile Client Configuration
@@ -231,14 +282,18 @@ new Client
 Default configuration in the mobile client:
 - **IdP URL**: `https://idp.dev.internal:5001`
 - **API URL**: `https://api.dev.internal:5002`
+- **WebView URL**: `https://web.dev.internal:5003`
 - **Client ID**: `mobile-client`
 - **Redirect URI**: `com.idp.mobile://callback`
 - **Scopes**: `openid profile email api offline_access`
+- **DPoP**: Enabled (tokens bound to device-specific keys)
+- **PRF Extension**: Enabled (for device binding)
 
 To change these, edit:
 - `Sources/IdpMobileClient/OAuthClient.swift`
 - `Sources/IdpMobileClient/PasskeyAuthService.swift`
 - `Sources/IdpMobileClient/ApiClient.swift`
+- `Sources/IdpMobileDemoApp/ContentView.swift`
 
 ## Troubleshooting
 
@@ -346,17 +401,19 @@ sudo brew services restart dnsmasq
 ### Key Features
 
 - **WebAuthn/Passkeys**: Passwordless authentication using FIDO2 standards
-- **PRF Extension**: Pseudo-Random Function extension for deriving encryption keys
+- **PRF Extension**: Derives device-specific keys for DPoP binding
+- **DPoP Token Binding**: Tokens cryptographically bound to device keys
+- **Device Binding**: Server verifies DPoP key matches the device that authenticated
+- **Session Exchange**: Secure cookie exchange for WebView SSO
 - **PKCE**: Proof Key for Code Exchange for secure OAuth flows
-- **Token Management**: Automatic token refresh and secure storage
+- **Token Management**: Automatic token refresh with DPoP proofs
 - **Native iOS Integration**: Uses iOS AuthenticationServices framework
 
 ## Additional Resources
 
-For more detailed information, see:
-- **Mobile Client**: `IdpMobileClient/README.md`
-- **API**: `Api/README.md`
-- **PRF Extension**: `IdentityServerAspNetIdentityPasskeys/Passkeys/PRF_EXTENSION.md`
+For more detailed information about the implementation, see:
+- **Main README**: `README.md` - Comprehensive overview of features and architecture
+- **Source Code**: All components include inline documentation
 
 ## Support
 

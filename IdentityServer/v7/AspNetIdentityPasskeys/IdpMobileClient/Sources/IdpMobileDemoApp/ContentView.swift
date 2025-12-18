@@ -10,149 +10,87 @@ struct ContentView: View {
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 20) {
-                if viewModel.isAuthenticated {
-                    // Authenticated state
-                    VStack(spacing: 16) {
-                        Text("✓ Signed In")
-                            .font(.title2)
-                            .foregroundColor(.green)
-                        
-                        if let username = viewModel.username {
-                            Text("Welcome, \(username)")
-                                .font(.body)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Divider()
-                            .padding(.vertical)
-                        
-                        if viewModel.hasDPoPBinding {
-                            HStack {
-                                Image(systemName: "lock.shield.fill")
-                                    .foregroundColor(.green)
-                                Text("DPoP Enabled")
-                                    .font(.caption)
-                                    .foregroundColor(.green)
-                            }
-                            .padding(.vertical, 4)
-                        }
-                        
+            if showWebView, let cookies = viewModel.sessionCookies {
+                // Show WebView as embedded view
+                AuthenticatedWebViewWrapper(
+                    cookies: cookies,
+                    initialUrl: URL(string: "https://web.dev.internal:5003")!
+                )
+                .navigationTitle("Web Content")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
                         Button(action: {
-                            Task {
-                                do {
-                                    try await viewModel.prepareAuthenticatedWebView()
-                                    showWebView = true
-                                } catch {
-                                    print("❌ Failed to prepare WebView: \(error)")
-                                    viewModel.errorMessage = "Failed to prepare WebView: \(error.localizedDescription)"
-                                }
-                            }
+                            showWebView = false
                         }) {
                             HStack {
-                                Image(systemName: "globe")
-                                Text("Open WebView")
+                                Image(systemName: "chevron.left")
+                                Text("Back")
                             }
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(Color.purple)
-                            .foregroundColor(.white)
-                            .cornerRadius(10)
-                        }
-                        .disabled(viewModel.isLoading)
-                        
-                        Button(action: {
-                            Task {
-                                await viewModel.callApi()
-                            }
-                        }) {
-                            HStack {
-                                Image(systemName: "network")
-                                Text("Call API")
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(Color.blue)
-                            .foregroundColor(.white)
-                            .cornerRadius(10)
-                        }
-                        .disabled(viewModel.isLoading)
-                        
-                        Button(action: {
-                            Task {
-                                await viewModel.refreshToken()
-                            }
-                        }) {
-                            HStack {
-                                Image(systemName: "arrow.clockwise")
-                                if viewModel.hasDPoPBinding {
-                                    Text("Refresh Token (DPoP - No Passkey!)")
-                                } else {
-                                    Text("Refresh Token")
-                                }
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(Color.orange)
-                            .foregroundColor(.white)
-                            .cornerRadius(10)
-                        }
-                        .disabled(viewModel.isLoading)
-                        
-                        if let apiResponse = viewModel.apiResponse {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("API Response:")
-                                    .font(.headline)
-                                ScrollView {
-                                    Text(apiResponse)
-                                        .font(.system(.body, design: .monospaced))
-                                        .padding()
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .background(Color.gray.opacity(0.1))
-                                        .cornerRadius(8)
-                                }
-                                .frame(maxHeight: 200)
-                            }
-                            .padding(.top)
-                        }
-                        
-                        Spacer()
-                        
-                        Button(action: {
-                            viewModel.signOut()
-                        }) {
-                            Text("Sign Out")
-                                .foregroundColor(.red)
                         }
                     }
-                    .padding()
-                } else {
-                    // Unauthenticated state
-                    VStack(spacing: 16) {
-                        Image(systemName: "person.badge.key.fill")
-                            .font(.system(size: 60))
-                            .foregroundColor(.blue)
-                            .padding(.bottom, 20)
-                        
-                        Text("IdP Mobile Client")
-                            .font(.title)
-                            .fontWeight(.bold)
-                        
-                        Text("Sign in with your passkey to continue")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
-                        
-                        VStack(spacing: 12) {
+                }
+            } else {
+                // Show main menu
+                VStack(spacing: 20) {
+                    if viewModel.isAuthenticated {
+                        // Authenticated state
+                        VStack(spacing: 16) {
+                            Text("✓ Signed In")
+                                .font(.title2)
+                                .foregroundColor(.green)
+                            
+                            if let username = viewModel.username {
+                                Text("Welcome, \(username)")
+                                    .font(.body)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Divider()
+                                .padding(.vertical)
+                            
+                            if viewModel.hasDPoPBinding {
+                                HStack {
+                                    Image(systemName: "lock.shield.fill")
+                                        .foregroundColor(.green)
+                                    Text("DPoP Enabled")
+                                        .font(.caption)
+                                        .foregroundColor(.green)
+                                }
+                                .padding(.vertical, 4)
+                            }
+                            
                             Button(action: {
                                 Task {
-                                    await viewModel.signInWithPasskey()
+                                    do {
+                                        try await viewModel.prepareAuthenticatedWebView()
+                                        showWebView = true
+                                    } catch {
+                                        print("❌ Failed to prepare WebView: \(error)")
+                                        viewModel.errorMessage = "Failed to prepare WebView: \(error.localizedDescription)"
+                                    }
                                 }
                             }) {
                                 HStack {
-                                    Image(systemName: "key.fill")
-                                    Text("Sign in with Passkey")
+                                    Image(systemName: "globe")
+                                    Text("Open WebView")
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(Color.purple)
+                                .foregroundColor(.white)
+                                .cornerRadius(10)
+                            }
+                            .disabled(viewModel.isLoading)
+                            
+                            Button(action: {
+                                Task {
+                                    await viewModel.callApi()
+                                }
+                            }) {
+                                HStack {
+                                    Image(systemName: "network")
+                                    Text("Call API")
                                 }
                                 .frame(maxWidth: .infinity)
                                 .padding()
@@ -163,49 +101,127 @@ struct ContentView: View {
                             .disabled(viewModel.isLoading)
                             
                             Button(action: {
-                                viewModel.showRegistration = true
+                                Task {
+                                    await viewModel.refreshToken()
+                                }
                             }) {
                                 HStack {
-                                    Image(systemName: "person.badge.plus")
-                                    Text("Register New Passkey")
+                                    Image(systemName: "arrow.clockwise")
+                                    if viewModel.hasDPoPBinding {
+                                        Text("Refresh Token (DPoP - No Passkey!)")
+                                    } else {
+                                        Text("Refresh Token")
+                                    }
                                 }
                                 .frame(maxWidth: .infinity)
                                 .padding()
-                                .background(Color.green)
+                                .background(Color.orange)
                                 .foregroundColor(.white)
                                 .cornerRadius(10)
                             }
                             .disabled(viewModel.isLoading)
-                        }
-                        .padding(.horizontal)
-                        
-                        if viewModel.isLoading {
-                            ProgressView()
+                            
+                            if let apiResponse = viewModel.apiResponse {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("API Response:")
+                                        .font(.headline)
+                                    ScrollView {
+                                        Text(apiResponse)
+                                            .font(.system(.body, design: .monospaced))
+                                            .padding()
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .background(Color.gray.opacity(0.1))
+                                            .cornerRadius(8)
+                                    }
+                                    .frame(maxHeight: 200)
+                                }
                                 .padding(.top)
+                            }
+                            
+                            Spacer()
+                            
+                            Button(action: {
+                                viewModel.signOut()
+                            }) {
+                                Text("Sign Out")
+                                    .foregroundColor(.red)
+                            }
                         }
-                    }
-                    .padding()
-                }
-                
-                if let error = viewModel.errorMessage {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundColor(.red)
                         .padding()
-                        .background(Color.red.opacity(0.1))
-                        .cornerRadius(8)
-                        .padding(.horizontal)
+                    } else {
+                        // Unauthenticated state
+                        VStack(spacing: 16) {
+                            Image(systemName: "person.badge.key.fill")
+                                .font(.system(size: 60))
+                                .foregroundColor(.blue)
+                                .padding(.bottom, 20)
+                            
+                            Text("IdP Mobile Client")
+                                .font(.title)
+                                .fontWeight(.bold)
+                            
+                            Text("Sign in with your passkey to continue")
+                                .font(.body)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal)
+                            
+                            VStack(spacing: 12) {
+                                Button(action: {
+                                    Task {
+                                        await viewModel.signInWithPasskey()
+                                    }
+                                }) {
+                                    HStack {
+                                        Image(systemName: "key.fill")
+                                        Text("Sign in with Passkey")
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding()
+                                    .background(Color.blue)
+                                    .foregroundColor(.white)
+                                    .cornerRadius(10)
+                                }
+                                .disabled(viewModel.isLoading)
+                                
+                                Button(action: {
+                                    viewModel.showRegistration = true
+                                }) {
+                                    HStack {
+                                        Image(systemName: "person.badge.plus")
+                                        Text("Register New Passkey")
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding()
+                                    .background(Color.green)
+                                    .foregroundColor(.white)
+                                    .cornerRadius(10)
+                                }
+                                .disabled(viewModel.isLoading)
+                            }
+                            .padding(.horizontal)
+                            
+                            if viewModel.isLoading {
+                                ProgressView()
+                                    .padding(.top)
+                            }
+                        }
+                        .padding()
+                    }
+                    
+                    if let error = viewModel.errorMessage {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                            .padding()
+                            .background(Color.red.opacity(0.1))
+                            .cornerRadius(8)
+                            .padding(.horizontal)
+                    }
                 }
-            }
-            .navigationTitle("IdP Demo")
-            .sheet(isPresented: $viewModel.showRegistration) {
-                RegistrationView(viewModel: viewModel)
-            }
-            .sheet(isPresented: $showWebView) {
-                if let cookies = viewModel.sessionCookies {
-                    AuthenticatedWebViewScreen(sessionCookies: cookies)
-                } else {
-                    Text("Loading...")
+                .navigationTitle("IdP Demo")
+                .sheet(isPresented: $viewModel.showRegistration) {
+                    RegistrationView(viewModel: viewModel)
                 }
             }
         }
@@ -953,37 +969,6 @@ struct AuthenticatedWebViewWrapper: UIViewRepresentable {
             print("🔀 [WebView] Navigation to: \(navigationAction.request.url?.absoluteString ?? "unknown")")
             decisionHandler(.allow)
         }
-    }
-}
-
-struct AuthenticatedWebViewScreen: View {
-    let sessionCookies: [HTTPCookie]
-    @Environment(\.dismiss) var dismiss
-    
-    var body: some View {
-        NavigationView {
-            AuthenticatedWebViewWrapper(
-                cookies: sessionCookies,
-                initialUrl: buildLoginUrl()
-            )
-            .navigationTitle("Web Content")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Close") {
-                        dismiss()
-                    }
-                }
-            }
-        }
-    }
-    
-    private func buildLoginUrl() -> URL {
-        // Load the WebView app directly - it will initiate OIDC flow with IdentityServer
-        // The injected IdP cookie will authenticate the user during the OIDC redirect
-        let url = URL(string: "https://web.dev.internal:5003")!
-        print("🌐 [WebView] Loading WebView app directly: \(url)")
-        return url
     }
 }
 

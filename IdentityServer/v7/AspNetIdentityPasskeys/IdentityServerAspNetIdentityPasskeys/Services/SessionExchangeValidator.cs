@@ -140,16 +140,21 @@ public class SessionExchangeValidator
 
             var thumbprint = ComputeThumbprint(jwk);
             
-            // Verify the DPoP key is bound to this user by checking device binding
-            var deviceBinding = await _deviceBindingStore.GetByThumbprintAsync(thumbprint);
-            if (deviceBinding == null)
+            // Verify device binding: DPoP key must match the one used during authentication
+            if (!string.IsNullOrEmpty(mobileSession.DPoPKeyThumbprint))
             {
-                return SessionExchangeValidationResult.Failure("No device binding found for DPoP key");
+                if (mobileSession.DPoPKeyThumbprint != thumbprint)
+                {
+                    _logger.LogWarning("❌ [SessionExchange] Device binding violation! Expected thumbprint: {Expected}, Got: {Actual}",
+                        mobileSession.DPoPKeyThumbprint, thumbprint);
+                    return SessionExchangeValidationResult.Failure("DPoP key does not match device binding");
+                }
+                
+                _logger.LogInformation("✅ [SessionExchange] Device binding verified - DPoP key matches");
             }
-            
-            if (deviceBinding.UserId != sub)
+            else
             {
-                return SessionExchangeValidationResult.Failure("DPoP key not bound to this user");
+                _logger.LogWarning("⚠️ [SessionExchange] No device binding stored for session {SessionId}", sid);
             }
 
             await _replayCache.AddAsync(jti, TimeSpan.FromMinutes(5));

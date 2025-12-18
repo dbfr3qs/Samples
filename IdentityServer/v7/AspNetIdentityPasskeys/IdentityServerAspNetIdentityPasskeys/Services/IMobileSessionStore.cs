@@ -17,4 +17,11 @@ public class MobileSession
     public DateTime Created { get; set; }
     public DateTime Expires { get; set; }
     public Dictionary<string, string> Claims { get; set; } = new();
+    
+    /// <summary>
+    /// DPoP key thumbprint (JKT) that is bound to this mobile session.
+    /// Used to verify device binding during session exchange.
+    /// The thumbprint is derived from PRF output and is stable per device.
+    /// </summary>
+    public string? DPoPKeyThumbprint { get; set; }
 }

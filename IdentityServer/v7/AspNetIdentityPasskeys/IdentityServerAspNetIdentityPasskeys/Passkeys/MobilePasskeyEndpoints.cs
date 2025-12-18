@@ -679,7 +679,8 @@ public static class MobilePasskeyEndpoints
                     DisplayName = user.UserName ?? user.Email ?? "Unknown",
                     Created = DateTime.UtcNow,
                     Expires = DateTime.UtcNow.AddHours(10),
-                    Claims = identity?.Claims.ToDictionary(c => c.Type, c => c.Value) ?? new Dictionary<string, string>()
+                    Claims = identity?.Claims.ToDictionary(c => c.Type, c => c.Value) ?? new Dictionary<string, string>(),
+                    DPoPKeyThumbprint = request.DPoPKeyThumbprint // Store for device binding verification
                 };
                 
                 await mobileSessionStore.CreateSessionAsync(mobileSession);
@@ -754,6 +755,7 @@ public static class MobilePasskeyEndpoints
         string CredentialJson,
         string? State,
         string? CodeChallenge,
-        string? CodeChallengeMethod
+        string? CodeChallengeMethod,
+        string? DPoPKeyThumbprint  // JKT from DPoP proof for device binding
     );
 }

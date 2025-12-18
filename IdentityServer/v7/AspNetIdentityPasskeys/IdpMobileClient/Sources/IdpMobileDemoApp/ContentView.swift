@@ -715,16 +715,24 @@ class AuthViewModel: NSObject, ObservableObject {
             print("🔐 [Passkey] Using stored code verifier: \(verifier)")
             print("🔐 [Passkey] Regenerated code challenge: \(codeChallenge)")
             
-            // Step 4: Complete authentication with IdP
+            // Step 4: Get DPoP thumbprint for device binding
+            let (_, _, thumbprint) = try dpopKeyManager.getOrDeriveKey(
+                prfOutput: prfOutput,
+                credentialId: credential.credentialID
+            )
+            print("🔐 [Passkey] DPoP thumbprint for device binding: \(thumbprint.prefix(20))...")
+            
+            // Step 5: Complete authentication with IdP
             print("🔐 [Passkey] Calling completeAuthentication...")
             let result = try await passkeyService.completeAuthentication(
                 credential: credential,
                 challengeId: challengeId,
-                codeChallenge: codeChallenge
+                codeChallenge: codeChallenge,
+                dpopKeyThumbprint: thumbprint
             )
             print("✅ [Passkey] Authentication completed, received code: \(result.code.prefix(20))...")
             
-            // Step 5: Exchange authorization code for tokens with DPoP support
+            // Step 6: Exchange authorization code for tokens with DPoP support
             print("🔐 [OAuth] Exchanging code for tokens...")
             let tokenResponse: TokenResponse
             if let prfOutput = prfOutput {

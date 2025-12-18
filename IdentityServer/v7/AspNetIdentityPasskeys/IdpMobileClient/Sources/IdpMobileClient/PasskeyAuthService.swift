@@ -202,7 +202,8 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
         credential: ASAuthorizationPlatformPublicKeyCredentialAssertion,
         challengeId: String,
         codeChallenge: String,
-        codeChallengeMethod: String = "S256"
+        codeChallengeMethod: String = "S256",
+        dpopKeyThumbprint: String? = nil
     ) async throws -> AuthenticationResult {
         let url = URL(string: "\(idpBaseURL)/api/passkey/authenticate/complete")!
         
@@ -249,13 +250,19 @@ public final class PasskeyAuthService: NSObject, @unchecked Sendable {
         let credentialJsonData = try JSONEncoder().encode(credentialData)
         let credentialJsonString = String(data: credentialJsonData, encoding: .utf8) ?? ""
         
-        // Wrap in the expected request format with PKCE parameters and challengeId
-        let requestBody: [String: String] = [
+        // Wrap in the expected request format with PKCE parameters, challengeId, and DPoP thumbprint
+        var requestBody: [String: String] = [
             "challengeId": challengeId,
             "credentialJson": credentialJsonString,
             "codeChallenge": codeChallenge,
             "codeChallengeMethod": codeChallengeMethod
         ]
+        
+        // Add DPoP thumbprint for device binding if available
+        if let dpopKeyThumbprint = dpopKeyThumbprint {
+            requestBody["dpopKeyThumbprint"] = dpopKeyThumbprint
+            print("🔐 [PasskeyService] Including DPoP thumbprint for device binding: \(dpopKeyThumbprint.prefix(20))...")
+        }
         
         print("🔐 [PasskeyService] Sending code challenge: \(codeChallenge.prefix(20))...")
         print("🔐 [PasskeyService] Code challenge length: \(codeChallenge.count)")

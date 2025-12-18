@@ -43,6 +43,13 @@ public final class SessionExchangeClient: @unchecked Sendable {
         // Convert cookie data to HTTPCookie objects
         var cookies: [HTTPCookie] = []
         for cookieData in responseData.cookies {
+            print("   📋 Creating cookie: \(cookieData.name)")
+            print("      Value length: \(cookieData.value.count)")
+            print("      Domain: \(cookieData.domain)")
+            print("      Path: \(cookieData.path)")
+            print("      Secure: \(cookieData.secure)")
+            print("      HttpOnly: \(cookieData.httpOnly)")
+            
             var properties: [HTTPCookiePropertyKey: Any] = [
                 .name: cookieData.name,
                 .value: cookieData.value,
@@ -51,13 +58,17 @@ public final class SessionExchangeClient: @unchecked Sendable {
                 .secure: cookieData.secure ? "TRUE" : "FALSE"
             ]
             
+            // Add expires if present (HTTPCookie expects Date object)
             if let expires = cookieData.expires {
-                properties[.expires] = expires
+                let expiresDate = Date(timeIntervalSince1970: expires)
+                properties[.expires] = expiresDate
             }
             
             if let cookie = HTTPCookie(properties: properties) {
                 cookies.append(cookie)
-                print("   🍪 \(cookie.name) for \(cookie.domain ?? "unknown")")
+                print("   ✅ Created cookie: \(cookie.name) (value length: \(cookie.value.count))")
+            } else {
+                print("   ❌ Failed to create HTTPCookie for \(cookieData.name)")
             }
         }
         
@@ -89,7 +100,7 @@ struct CookieDataDTO: Codable {
     let secure: Bool
     let httpOnly: Bool
     let sameSite: String
-    let expires: Date?
+    let expires: Double? // Unix timestamp
 }
 
 public struct SessionExchangeResponse {

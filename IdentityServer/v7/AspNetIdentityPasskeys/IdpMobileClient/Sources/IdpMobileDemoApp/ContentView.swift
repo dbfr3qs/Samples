@@ -852,6 +852,8 @@ struct AuthenticatedWebViewWrapper: UIViewRepresentable {
     
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
+        // Use non-persistent data store to start with clean cookies each time
+        config.websiteDataStore = WKWebsiteDataStore.nonPersistent()
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         return webView
@@ -863,20 +865,60 @@ struct AuthenticatedWebViewWrapper: UIViewRepresentable {
         
         let group = DispatchGroup()
         
-        print("🍪 [WebView] Injecting \(cookies.count) cookies...")
-        
-        for cookie in cookies {
-            group.enter()
-            cookieStore.setCookie(cookie) {
-                print("✅ [WebView] Set cookie: \(cookie.name) for domain: \(cookie.domain)")
+        // First, clear all existing cookies for dev.internal domain to avoid conflicts
+        group.enter()
+        cookieStore.getAllCookies { existingCookies in
+            print("🧹 [WebView] Clearing existing cookies for dev.internal domain...")
+            let devInternalCookies = existingCookies.filter { $0.domain.contains("dev.internal") }
+            print("   Found \(devInternalCookies.count) existing cookies to remove")
+            
+            let deleteGroup = DispatchGroup()
+            for cookie in devInternalCookies {
+                deleteGroup.enter()
+                print("   🗑️ Removing: \(cookie.name) (length: \(cookie.value.count))")
+                cookieStore.delete(cookie) {
+                    deleteGroup.leave()
+                }
+            }
+            
+            deleteGroup.notify(queue: .main) {
+                print("✅ [WebView] Cleared all existing cookies")
                 group.leave()
             }
         }
         
+        // Wait for cleanup, then inject new cookies
         group.notify(queue: .main) {
-            print("🌐 [WebView] All cookies set, loading: \(initialUrl)")
-            let request = URLRequest(url: initialUrl)
-            webView.load(request)
+            print("🍪 [WebView] Injecting \(cookies.count) new cookies...")
+            
+            let injectGroup = DispatchGroup()
+            for cookie in cookies {
+                injectGroup.enter()
+                print("🍪 [WebView] Setting cookie: \(cookie.name)")
+                print("   Value (first 50 chars): \(String(cookie.value.prefix(50)))")
+                print("   Value length: \(cookie.value.count)")
+                print("   Domain: \(cookie.domain)")
+                
+                cookieStore.setCookie(cookie) {
+                    print("✅ [WebView] Set cookie: \(cookie.name) for domain: \(cookie.domain)")
+                    injectGroup.leave()
+                }
+            }
+            
+            injectGroup.notify(queue: .main) {
+                print("🌐 [WebView] All cookies set, loading: \(initialUrl)")
+                
+                // Verify cookies were actually set
+                cookieStore.getAllCookies { allCookies in
+                    print("🔍 [WebView] Verifying cookies after injection:")
+                    for cookie in allCookies.filter({ $0.domain.contains("dev.internal") }) {
+                        print("   📋 \(cookie.name): \(String(cookie.value.prefix(50)))... (length: \(cookie.value.count))")
+                    }
+                }
+                
+                let request = URLRequest(url: initialUrl)
+                webView.load(request)
+            }
         }
     }
     
@@ -929,14 +971,11 @@ struct AuthenticatedWebViewScreen: View {
     }
     
     private func buildLoginUrl() -> URL {
-        // Load the IdP login endpoint with returnUrl to the WebView app
-        var components = URLComponents(string: "https://idp.dev.internal/Account/Login")!
-        components.queryItems = [
-            URLQueryItem(name: "returnUrl", value: "https://web.dev.internal:5003")
-        ]
-        
-        print("🌐 [WebView] Loading IdP login with returnUrl to WebView app")
-        return components.url!
+        // Load the WebView app directly - it will initiate OIDC flow with IdentityServer
+        // The injected IdP cookie will authenticate the user during the OIDC redirect
+        let url = URL(string: "https://web.dev.internal:5003")!
+        print("🌐 [WebView] Loading WebView app directly: \(url)")
+        return url
     }
 }
 

@@ -9,6 +9,35 @@
     <p>This is a simple page loaded in the iOS app's webview.</p>
     <p>Current time: @DateTime.Now.ToString("HH:mm:ss")</p>
     
+    @if (User.Identity?.IsAuthenticated == true)
+    {
+        <div style="margin-top: 20px; padding: 15px; background-color: #f0f0f0; border-radius: 5px;">
+            <h2>User Claims</h2>
+            <p><strong>Name:</strong> @User.Identity.Name</p>
+            <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+                <thead>
+                    <tr style="background-color: #ddd;">
+                        <th style="padding: 8px; text-align: left; border: 1px solid #ccc;">Claim Type</th>
+                        <th style="padding: 8px; text-align: left; border: 1px solid #ccc;">Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var claim in User.Claims.OrderBy(c => c.Type))
+                    {
+                        <tr>
+                            <td style="padding: 8px; border: 1px solid #ccc; font-family: monospace; font-size: 12px;">@claim.Type</td>
+                            <td style="padding: 8px; border: 1px solid #ccc; word-break: break-all;">@claim.Value</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+    else
+    {
+        <p style="color: red; margin-top: 20px;">Not authenticated</p>
+    }
+    
     <button onclick="alert('Button clicked!')" style="padding: 10px 20px; font-size: 16px; margin-top: 20px;">
         Click Me
     </button>

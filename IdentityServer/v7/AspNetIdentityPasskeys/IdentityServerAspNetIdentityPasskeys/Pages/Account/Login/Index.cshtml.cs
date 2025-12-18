@@ -49,6 +49,18 @@ public class Index : PageModel
 
     public async Task<IActionResult> OnGet(string? returnUrl)
     {
+        // If user is already authenticated, redirect to return URL
+        if (User?.Identity?.IsAuthenticated == true)
+        {
+            if (!string.IsNullOrEmpty(returnUrl))
+            {
+                // User is authenticated, redirect to the returnUrl
+                // This allows WebView to load with the authenticated session
+                return Redirect(returnUrl);
+            }
+            return Redirect("~/");
+        }
+
         await BuildModelAsync(returnUrl);
 
         if (View.IsExternalLoginOnly)

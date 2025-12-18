@@ -1,5 +1,6 @@
 using IdentityServerAspNetIdentityPasskeys.Models;
 using IdentityServerAspNetIdentityPasskeys.Services;
+using IdentityServerAspNetIdentityPasskeys.Data;
 using Microsoft.AspNetCore.Mvc;
 
 namespace IdentityServerAspNetIdentityPasskeys.Endpoints;
@@ -18,7 +19,9 @@ public static class SessionExchangeEndpoint
         [FromBody] SessionExchangeRequest request,
         SessionExchangeValidator validator,
         HttpContext httpContext,
-        ILogger<SessionExchangeRequest> logger)
+        ILogger<SessionExchangeRequest> logger,
+        [FromServices] Microsoft.AspNetCore.Identity.SignInManager<ApplicationUser> signInManager,
+        [FromServices] Microsoft.AspNetCore.DataProtection.IDataProtectionProvider dataProtectionProvider)
     {
         logger.LogInformation("🔐 [SessionExchange] Received session exchange request");
 
@@ -40,28 +43,90 @@ public static class SessionExchangeEndpoint
         }
 
         var mobileSession = validationResult.Session!;
-        var sessionKey = mobileSession.Key;
 
         logger.LogInformation("✅ [SessionExchange] Validation successful for session {SessionId}", mobileSession.SessionId);
 
-        // Create session cookies that can be injected into the WebView
-        var cookies = new List<CookieData>();
-
-        // Create the IdentityServer session cookie using the session key
-        // This is what IdentityServer uses to look up the session
-        cookies.Add(new CookieData
+        // Get the user to create authentication cookie
+        var user = await signInManager.UserManager.FindByIdAsync(mobileSession.SubjectId);
+        if (user == null)
         {
-            Name = "idsrv.session",
-            Value = sessionKey, // Use the session Key, not SessionId
-            Domain = ".dev.internal", // Use wildcard domain for idp.dev.internal
-            Path = "/",
-            Secure = true,
-            HttpOnly = false,
-            SameSite = "None",
-            Expires = new DateTimeOffset(mobileSession.Expires).ToUnixTimeSeconds()
-        });
+            logger.LogWarning("❌ [SessionExchange] User not found: {SubjectId}", mobileSession.SubjectId);
+            return Results.Unauthorized();
+        }
 
-        logger.LogInformation("📦 [SessionExchange] Returning session cookie with key: {SessionKey}", sessionKey);
+        // Create claims principal for the user
+        var claimsPrincipalFactory = httpContext.RequestServices.GetRequiredService<Microsoft.AspNetCore.Identity.IUserClaimsPrincipalFactory<ApplicationUser>>();
+        var principal = await claimsPrincipalFactory.CreateAsync(user);
+        
+        // Add required IdentityServer claims
+        var identity = principal.Identity as System.Security.Claims.ClaimsIdentity;
+        if (identity != null)
+        {
+            // Add idp claim (identity provider) - required by IdentityServer
+            identity.AddClaim(new System.Security.Claims.Claim("idp", "local"));
+            
+            // Add amr claim (authentication method reference)
+            identity.AddClaim(new System.Security.Claims.Claim("amr", "pwd"));
+            
+            // Add auth_time claim (authentication time)
+            var authTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+            identity.AddClaim(new System.Security.Claims.Claim("auth_time", authTime));
+        }
+        
+        logger.LogInformation("📋 [SessionExchange] Created principal with {ClaimCount} claims for user {UserId}", 
+            principal.Claims.Count(), user.Id);
+        
+        // Create authentication properties
+        var authProps = new Microsoft.AspNetCore.Authentication.AuthenticationProperties
+        {
+            IsPersistent = false,
+            ExpiresUtc = DateTimeOffset.UtcNow.AddHours(10),
+            IssuedUtc = DateTimeOffset.UtcNow
+        };
+
+        // Create authentication ticket
+        var ticket = new Microsoft.AspNetCore.Authentication.AuthenticationTicket(
+            principal,
+            authProps,
+            "Identity.Application"
+        );
+
+        // Create data protector with the same purpose string as ASP.NET Core Identity cookies
+        // The purpose string must match exactly what CookieAuthenticationHandler uses
+        var protector = dataProtectionProvider
+            .CreateProtector("Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationMiddleware")
+            .CreateProtector("Identity.Application")
+            .CreateProtector("v2");
+        
+        // Serialize and protect the ticket
+        var ticketSerializer = new Microsoft.AspNetCore.Authentication.TicketSerializer();
+        var ticketBytes = ticketSerializer.Serialize(ticket);
+        var protectedBytes = protector.Protect(ticketBytes);
+        
+        // Encode to Base64Url (ASP.NET Core cookie format)
+        var actualCookieValue = Microsoft.AspNetCore.WebUtilities.Base64UrlTextEncoder.Encode(protectedBytes);
+        
+        logger.LogInformation("📦 [SessionExchange] Created cookie value (length: {Length}, first 50 chars: {Preview})", 
+            actualCookieValue.Length, 
+            actualCookieValue.Length > 50 ? actualCookieValue.Substring(0, 50) : actualCookieValue);
+
+        // Create session cookies that can be injected into the WebView
+        var cookies = new List<CookieData>
+        {
+            new CookieData
+            {
+                Name = ".AspNetCore.Identity.Application",
+                Value = actualCookieValue,
+                Domain = "idp.dev.internal", // Must match the IdP domain exactly
+                Path = "/",
+                Secure = true,
+                HttpOnly = true,
+                SameSite = "None",
+                Expires = new DateTimeOffset(mobileSession.Expires).ToUnixTimeSeconds()
+            }
+        };
+        
+        logger.LogInformation("📦 [SessionExchange] Created authentication cookie for user {UserId}", user.Id);
 
         var response = new SessionExchangeResponse
         {

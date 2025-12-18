@@ -124,26 +124,23 @@ internal static class HostingExtensions
         builder.Services.AddScoped<IDeviceBindingStore, DeviceBindingStore>();
         builder.Services.AddHttpContextAccessor();
 
-        builder.Services
-            .AddIdentityServer(options =>
+        builder.Services.AddIdentityServer(options =>
             {
                 options.Events.RaiseErrorEvents = true;
                 options.Events.RaiseInformationEvents = true;
                 options.Events.RaiseFailureEvents = true;
                 options.Events.RaiseSuccessEvents = true;
 
-                // Use a large chunk size for diagnostic data in development where it will be redirected to a local file.
-                if (builder.Environment.IsDevelopment())
-                {
-                    options.Diagnostics.ChunkSize = 1024 * 1024 * 10; // 10 MB
-                }
+                // see https://docs.duendesoftware.com/identityserver/v7/fundamentals/resources/
+                options.EmitStaticAudienceClaim = true;
             })
             .AddInMemoryIdentityResources(Config.IdentityResources)
             .AddInMemoryApiScopes(Config.ApiScopes)
             .AddInMemoryApiResources(Config.ApiResources)
             .AddInMemoryClients(Config.Clients)
             .AddAspNetIdentity<ApplicationUser>()
-            .AddServerSideSessions()
+            // Disable server-side sessions - use cookie auth instead
+            // .AddServerSideSessions()
             .AddLicenseSummary();
 
         // Register DPoP custom validators
@@ -207,6 +204,26 @@ internal static class HostingExtensions
         
         // Enable session for passkey challenge storage
         app.UseSession();
+        
+        // Add middleware to log incoming cookies for debugging
+        app.Use(async (context, next) =>
+        {
+            if (context.Request.Path.StartsWithSegments("/Account/Login"))
+            {
+                var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
+                logger.LogInformation("🍪 [Login] Incoming request to {Path}", context.Request.Path);
+                logger.LogInformation("🍪 [Login] Cookie count: {Count}", context.Request.Cookies.Count);
+                
+                foreach (var cookie in context.Request.Cookies)
+                {
+                    var valuePreview = cookie.Value.Length > 50 ? cookie.Value.Substring(0, 50) + "..." : cookie.Value;
+                    logger.LogInformation("🍪 [Login] Cookie: {Name} = {Value} (length: {Length})", 
+                        cookie.Key, valuePreview, cookie.Value.Length);
+                }
+            }
+            
+            await next();
+        });
         
         app.UseIdentityServer();
         app.UseAuthorization();
